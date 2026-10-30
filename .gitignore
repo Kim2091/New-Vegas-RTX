@@ -1,0 +1,43 @@
+# Whitelist: only the file types below are tracked. Build output, IDE files
+# and anything else is ignored.
+
+# Ignore everything
+*
+
+# Allow looking into subdirectories
+!*/
+
+# Source code
+!*.cpp
+!*.hpp
+!*.h
+!*.c
+!*.inc
+!*.inl
+!*.rc
+
+# Build script and config
+!build.bat
+!build_plugin.bat
+!build_test.bat
+!*.ini
+!*.conf
+!.gitignore
+!.editorconfig
+
+# Module definition
+!*.def
+
+# Assets
+!*.png
+
+# Documentation
+!*.md
+!LICENSE
+!LICENSE.txt
+
+# Re-ignore build output (overrides the above)
+build/
+
+# The DirectX SDK is installed separately, never committed.
+deps/dxsdk/

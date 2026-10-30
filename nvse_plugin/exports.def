@@ -1,0 +1,5 @@
+LIBRARY fnv_remix_nvse
+EXPORTS
+	NVSEPlugin_Query
+	NVSEPlugin_Load
+	FnvRemix_GetApi
