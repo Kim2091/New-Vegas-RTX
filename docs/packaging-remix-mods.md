@@ -6,7 +6,7 @@ Organizer 2 or Vortex like any other mod.
 A Remix mod replaces the game's materials, meshes and lights by name. It lives in
 the game folder, in `rtx-remix\mods\<ModName>\`, not in `Data`. To learn how to
 make one, see the
-[RTX Remix Toolkit documentation](https://docs.omniverse.nvidia.com/kit/docs/rtx_remix/1.4.0-0/docs/howto/learning-toolkit.html).
+[RTX Remix Toolkit documentation](https://docs.omniverse.nvidia.com/kit/docs/rtx_remix/latest/docs/howto/learning-toolkit.html).
 
 ## The short version
 
@@ -45,7 +45,7 @@ mod folder names.
 ### 1. Package the mod in the Toolkit
 
 Use the Toolkit's Mod Packaging tab
-([NVIDIA's guide](https://docs.omniverse.nvidia.com/kit/docs/rtx_remix/1.4.0-0/docs/howto/learning-packaging.html)).
+([NVIDIA's guide](https://docs.omniverse.nvidia.com/kit/docs/rtx_remix/latest/docs/howto/learning-packaging.html)).
 If your mod builds on another Remix mod, make it a dependency: your mod then wins
 wherever it overrides that mod, even with no ownership files.
 
