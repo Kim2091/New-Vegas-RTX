@@ -44,11 +44,10 @@ The wrapper is built on xoxor4d's
 - Fallout: New Vegas 1.4.0.525 (Steam or GOG). The engine hooks use fixed
   addresses and are switched off on any other executable.
 - [xNVSE](https://github.com/xNVSE/NVSE) 6.4.8 or newer.
-- The RTX Remix runtime and bridge built from the New Vegas RTX branch of
-  dxvk-remix ([`fnv/main` on Kim2091/dxvk-remix](https://github.com/Kim2091/dxvk-remix/tree/fnv/main)),
-  or taken from a New Vegas RTX release package. The wrapper uses runtime
-  features that standard RTX Remix releases do not have, and needs the bridge
-  client and server from the same build.
+- The RTX Remix runtime and bridge from a New Vegas RTX release package, or
+  built from the `runtime/` submodule (see "Building from source"). The wrapper
+  uses runtime features that standard RTX Remix releases do not have, and needs
+  the bridge client and server from the same build.
 - An RTX Remix capable GPU and driver.
 
 ## Installation
@@ -138,7 +137,20 @@ and saves a screenshot, so a report can point at where a problem shows.
 
 ## Building from source
 
-Requirements:
+The wrapper and plugin build from a plain clone:
+
+```bat
+git clone https://github.com/Kim2091/New-Vegas-RTX
+```
+
+The runtime and bridge are the `runtime/` submodule, which points to the
+[`fnv/main` branch of Kim2091/dxvk-remix](https://github.com/Kim2091/dxvk-remix/tree/fnv/main)
+at the commit this wrapper works with. To get them as well, clone with
+`--recursive`, or run `git submodule update --init --recursive` in an existing
+clone. See `runtime/README.md` for how to build them. They have their own
+licences (`runtime/LICENSE` and `runtime/ThirdPartyLicenses.txt`).
+
+Requirements for the wrapper and plugin:
 
 - Visual Studio 2022 with the C++ desktop workload (the scripts use its x86
   toolset).
@@ -171,6 +183,7 @@ src/shared/      Framework from remix-comp-base: config, module loader, FFP stat
 src/shared/fnv_remix_plugin_api.h   The interface between the wrapper and the engine monitor
 src/reporter/    NewVegasRTX-Reporter.exe
 nvse_plugin/     The engine monitor (fnv_remix_nvse.dll)
+runtime/         Submodule: the RTX Remix runtime and bridge (Kim2091/dxvk-remix, fnv/main)
 deps/            Third-party libraries (see THIRD_PARTY_LICENSES.md)
 docs/            Design notes and the list of incompatible mods
 tests/           Standalone tests

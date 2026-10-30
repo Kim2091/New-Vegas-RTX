@@ -23,6 +23,7 @@
 !*.ini
 !*.conf
 !.gitignore
+!.gitmodules
 !.editorconfig
 
 # Module definition
