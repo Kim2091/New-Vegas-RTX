@@ -160,7 +160,8 @@ without any error. Say in your mod's description:
 | Grass, distant objects, distant trees | Yes | Yes |
 | Faces | Yes | No: they change every frame |
 | Particles | Yes | No: they're rebuilt every frame |
-| Tree leaves, land, water, skinned meshes | Yes | Untested |
+| Tree leaves, skinned meshes | Yes | Untested |
+| Land, water | Untested | Untested |
 
 Lights placed in the world can be replaced. Lights from effects, such as muzzle
 flashes and explosions, can't. A material replacement replaces the whole material,
