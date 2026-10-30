@@ -547,13 +547,14 @@ namespace comp::game::vs_expand
 
 		// Instance-register stride and index decode for the instanced families.
 		//   Grass / DistLod: frc/add/mova -> floor(TEXCOORD1.x), 1 register each.
-		//   DistTree (vs_1_1): mov a0.x, 2*TEXCOORD1.x; the index is already a
-		//   register offset. The engine writes whole numbers there, so floor and
-		//   round agree; rounding keeps a 2.9999-style value on the right slot.
+		//   DistTree (vs_1_1): mov a0.x, 2*TEXCOORD1.x, 2 registers each. The
+		//   instance index is TEXCOORD1.x. The engine writes whole numbers there,
+		//   so floor and round agree; rounding keeps a 2.9999-style value on the
+		//   right slot.
 		int instance_reg_offset(VsFamily f, float tc1x)
 		{
 			if (f == VsFamily::DistTree)
-				return floor_index(2.0f * tc1x + 0.5f);
+				return floor_index(tc1x + 0.5f);
 			return floor_index(tc1x);
 		}
 

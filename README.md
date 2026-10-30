@@ -83,9 +83,6 @@ wrapper's `d3d9.dll`.
   that Remix replaces: shadow maps, HDR, multisampling, depth of field and the
   water reflection passes (`[GameSettings]` in `remix-comp.ini`). The game's
   INI files are not changed.
-- Prebuilt terrain LOD packs with broken LOD meshes show stretched walls of
-  ground at the edge of the loaded area. Remove the pack, or generate terrain
-  LOD for your own load order with xLODGen.
 - Mods that replace or patch the renderer (ENB, ReShade, shader replacers, New
   Vegas Reloaded and others) are not supported. `docs/INCOMPATIBLE_MODS.md`
   lists the known ones; the wrapper names any it recognises in its in-game
