@@ -138,6 +138,11 @@ name with `<user>`.
 Press **F8** in game to mark a moment: it writes a `[Mark]` line to both logs
 and saves a screenshot, so a report can point at where a problem shows.
 
+## Making Remix mods
+
+To package a Remix mod so that players can sort it in Mod Organizer 2 or Vortex, see
+[Packaging Remix mods](docs/packaging-remix-mods.md).
+
 ## Building from source
 
 The wrapper and plugin build from a plain clone:
