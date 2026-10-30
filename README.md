@@ -1,5 +1,8 @@
 # New Vegas RTX
 
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/J3J3BCC3L)
+[![Support me on Patreon](https://img.shields.io/badge/Patreon-Support%20me-F96854?logo=patreon&logoColor=white)](https://www.patreon.com/c/sparkles1)
+
 New Vegas RTX makes Fallout: New Vegas render through
 [RTX Remix](https://github.com/NVIDIAGameWorks/rtx-remix), NVIDIA's path
 tracer for classic DirectX 9 games. This repository holds the two parts that
