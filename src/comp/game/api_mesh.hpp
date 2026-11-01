@@ -448,6 +448,34 @@ namespace comp::game::api
 			size_t index_count);
 		uint64_t of(const std::vector<remixapi_HardcodedVertex>& verts, const std::vector<uint32_t>& indices);
 
+		// The name of a static mesh with geometry key `key`: `key` itself, or the
+		// name for that geometry with this diffuse (rtxconf::d3d9_image_hash, 0 =
+		// none) when the shared mesh table lists the pair (shared_mesh_keys.hpp).
+		// Reads the table on its first call, which logs its size.
+		uint64_t for_static(uint64_t key, uint64_t diffuse);
+
+		// Whether the shared mesh table names this pair by vertex colours too.
+		bool wants_colours(uint64_t key, uint64_t diffuse);
+
+		// The name for a pair wants_colours accepts: by these colours if the table
+		// lists them, else a name no replacement has, so a mismatch shows the draw
+		// as it is. `colours` holds one D3DCOLOR per vertex, as the buffers do,
+		// whatever the material does with them. Logs each new result.
+		uint64_t for_colours(uint64_t key, uint64_t diffuse, const std::vector<uint32_t>& colours, const std::vector<uint32_t>& indices);
+
+		// for_static, with the colours read only for a pair that needs them.
+		template <typename ReadColours>
+		uint64_t for_static(uint64_t key, uint64_t diffuse, const std::vector<uint32_t>& indices, ReadColours&& read)
+		{
+			if (!wants_colours(key, diffuse)) return for_static(key, diffuse);
+			std::vector<uint32_t> colours;
+			read(colours);
+			return for_colours(key, diffuse, colours, indices);
+		}
+
+		// One D3DCOLOR per vertex from the attribute, or none without one.
+		void read_colours(const uint8_t* vertices, size_t stride, size_t count, const Attr& col, std::vector<uint32_t>& out);
+
 		// Whether the bridge client forwards the struct (checked once, logged).
 		bool forwarded();
 

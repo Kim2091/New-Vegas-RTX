@@ -1192,8 +1192,9 @@ namespace comp::game::scene_statics
 		enum class Outcome : uint8_t { Created, Declined, Deferred, OutOfBudget };
 
 		// The recorded window, copied from the recorded (packed) buffers.
+		// `colours` gets each vertex's colour as the buffer holds it.
 		bool build_mesh_data(const DrawRec& dr, bool vertex_color, std::vector<remixapi_HardcodedVertex>& verts,
-			std::vector<uint32_t>& indices, const char*& reject)
+			std::vector<uint32_t>& indices, std::vector<uint32_t>& colours, const char*& reject)
 		{
 			const DrawDesc& d = dr.d;
 			const INT first = d.base + static_cast<INT>(d.min_vtx);
@@ -1205,6 +1206,7 @@ namespace comp::game::scene_statics
 			static std::vector<uint32_t> stream;
 			if (!count || !copy_index_bytes(dr.ib, d.start_index, count, stream, reject)) return false;
 
+			asset_keys::read_colours(vbytes.data(), dr.stride, d.num_vtx, dr.col, colours);
 			verts.resize(d.num_vtx);
 			for (UINT i = 0; i < d.num_vtx; i++)
 			{
@@ -1272,9 +1274,11 @@ namespace comp::game::scene_statics
 		// normals, UV set 0, NiColorA colours; NiTriShapeData triangles or
 		// NiTriStripsData strips), for geometry the engine has not packed yet
 		// (packing frees the UV / colour arrays, so only unpacked geometry has
-		// them all). Called inside begin_resolve.
+		// them all). Called inside begin_resolve. `colours` gets each vertex's
+		// colour as D3DCOLOR.
 		bool cpu_mesh_data(const sg::DataRead& d, bool strips, bool vertex_color,
-			std::vector<remixapi_HardcodedVertex>& verts, std::vector<uint32_t>& indices, const char*& reject)
+			std::vector<remixapi_HardcodedVertex>& verts, std::vector<uint32_t>& indices, std::vector<uint32_t>& colours,
+			const char*& reject)
 		{
 			const uint32_t n = d.verts;
 			if (!n || !d.pos || !d.nrm || !d.uv) { reject = "incomplete CPU arrays"; return false; }
@@ -1288,12 +1292,16 @@ namespace comp::game::scene_statics
 				reject = "CPU arrays unreadable";
 				return false;
 			}
-			const bool have_col = vertex_color && d.col;
-			if (have_col)
+			const bool read_col = d.col != 0;
+			bool col_read = false;
+			if (read_col)
 			{
 				col.resize(n * 4u);
-				if (!sg::read_block(d.col, col.data(), n * 16u)) { reject = "CPU colours unreadable"; return false; }
+				col_read = sg::read_block(d.col, col.data(), n * 16u);
+				if (!col_read && vertex_color) { reject = "CPU colours unreadable"; return false; }
 			}
+			const bool have_col = vertex_color && col_read;
+			colours.assign(col_read ? n : 0u, 0u);
 			verts.resize(n);
 			for (uint32_t i = 0; i < n; i++)
 			{
@@ -1311,13 +1319,13 @@ namespace comp::game::scene_statics
 				else { o.normal[0] = 0.0f; o.normal[1] = 0.0f; o.normal[2] = 1.0f; }
 				o.texcoord[0] = uv[i * 2u];
 				o.texcoord[1] = uv[i * 2u + 1u];
-				if (have_col)
+				// NiColorA (r, g, b, a) as the runtime's B8G8R8A8.
+				if (col_read)
 				{
-					// NiColorA (r, g, b, a) as the runtime's B8G8R8A8.
 					const float* c = &col[i * 4u];
-					o.color = D3DCOLOR_ARGB(unorm8(c[3]), unorm8(c[0]), unorm8(c[1]), unorm8(c[2]));
+					colours[i] = D3DCOLOR_ARGB(unorm8(c[3]), unorm8(c[0]), unorm8(c[1]), unorm8(c[2]));
 				}
-				else o.color = 0xFFFFFFFFu;
+				o.color = have_col ? colours[i] : 0xFFFFFFFFu;
 			}
 			indices.clear();
 			auto emit = [&](uint32_t a, uint32_t b, uint32_t c) {
@@ -1635,10 +1643,11 @@ namespace comp::game::scene_statics
 			uint64_t content = 0;
 			static std::vector<remixapi_HardcodedVertex> verts;
 			static std::vector<uint32_t> indices;
+			static std::vector<uint32_t> colours;
 			if (cpu)
 			{
 				const char* reject = nullptr;
-				if (!cpu_mesh_data(d, r.draw.cpu_strips, vertex_color, verts, indices, reject))
+				if (!cpu_mesh_data(d, r.draw.cpu_strips, vertex_color, verts, indices, colours, reject))
 				{
 					tr(std::format("refused build ({})", reject ? reject : "?"));
 					refuse(r, Reason::Build);
@@ -1682,7 +1691,7 @@ namespace comp::game::scene_statics
 				if (upload_bytes && upload_bytes + bytes > upload_budget) return Outcome::OutOfBudget;
 				if (!take_build_budget(key, r.draw.d.num_vtx)) return Outcome::OutOfBudget;
 				const char* reject = nullptr;
-				if (!cpu && !build_mesh_data(r.draw, vertex_color, verts, indices, reject))
+				if (!cpu && !build_mesh_data(r.draw, vertex_color, verts, indices, colours, reject))
 				{
 					if (g_c.meshes_built == 0 && reject)
 						shared::common::log("SceneStatics", std::format("mesh build failed ({}): geo=0x{:X} {} verts, {} prims",
@@ -1698,7 +1707,8 @@ namespace comp::game::scene_statics
 				Mesh m;
 				bound_of(verts, m);
 				// The asset key names the geometry before the reversed copy.
-				const uint64_t asset_key = asset_keys::of(verts, indices);
+				const uint64_t asset_key = asset_keys::for_static(asset_keys::of(verts, indices), mt.albedo_d3d9, indices,
+					[&](std::vector<uint32_t>& out) { out = colours; });
 				m.facts = material::mesh_facts(verts, indices, vertex_color);
 				if (reversed_copy)
 				{

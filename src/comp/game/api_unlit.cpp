@@ -383,7 +383,8 @@ namespace comp::game::api_submit
 			mi.surfaces_count = 1;
 			// A refresh keeps the key the mesh was created with.
 			remixapi_AssetKeyEXT ak = {};
-			if (!refresh) asset_keys::chain(mi, ak, asset_keys::of(verts, g.tris));
+			if (!refresh) asset_keys::chain(mi, ak, asset_keys::for_static(asset_keys::of(verts, g.tris), mat.albedo_d3d9, g.tris,
+				[&](std::vector<uint32_t>& colours) { asset_keys::read_colours(g.verts.data(), g.stride, g.count, L.col, colours); }));
 			auto* b = bridge();
 			remixapi_MeshHandle h = nullptr;
 			if (!b || b->CreateMesh(&mi, &h) != REMIXAPI_ERROR_CODE_SUCCESS || !h)

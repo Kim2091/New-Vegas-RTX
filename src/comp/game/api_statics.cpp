@@ -360,7 +360,8 @@ namespace comp::game::api_submit
 				g_c.computed_normals++;
 			}
 			// The asset key names the geometry before the reversed copy.
-			const uint64_t asset_key = asset_keys::of(verts, g.tris);
+			const uint64_t asset_key = asset_keys::for_static(asset_keys::of(verts, g.tris), mat.albedo_d3d9, g.tris,
+				[&](std::vector<uint32_t>& colours) { asset_keys::read_colours(g.verts.data(), g.stride, g.count, L.col, colours); });
 			m.facts = material::mesh_facts(verts, g.tris, m.vertex_color);
 			if (reversed_copy)
 			{
