@@ -728,7 +728,7 @@ namespace comp::game::api_submit
 		}
 
 		const float* world = world_matrix();
-		const float* cam = game::camera_position_ptr;
+		const float* cam = game::camera_position();
 		if (!world || !cam) { st.fallbacks++; note_failure(st, "no WORLD matrix / camera position"); return true; }
 
 		const char* reject = nullptr;

@@ -36,10 +36,14 @@ namespace comp::game::fault_report
 			{ "d3d9ex", "The game's Direct3D device was created as D3D9Ex, so its textures cannot reach the path tracer "
 				"and the world does not render." },
 			{ "incompatible-dll", "A mod that does not work with this mod is loaded:" },
+			{ "nvtf-default-pool", "NVTF's bUseDefaultPoolForTextures is off, so every game texture keeps a copy in the "
+				"game's 4 GB of memory, and large mod lists can run out. In Data\\NVSE\\Plugins\\nvtf.ini set "
+				"bUseDefaultPoolForTextures = 1 under [DirectX] and bModifyDirectXBehavior = 1 under [Main]. This mod does "
+				"not change it for you, because NVTF's own notes say it can break Alt-Tab in exclusive fullscreen." },
 			{ "empty-scene", "The game world is not reaching the path tracer: nearly every draw was refused for 20 seconds." },
 			{ "plugin-read-faults", "The mod's xNVSE plugin keeps failing to read game memory, which points to another mod "
 				"changing the game's data." },
-			{ "game-crashed", "The game crashed in the previous session:" },
+			{ "game-crashed", "The game crashed last time." },
 		};
 		static_assert(std::size(kKinds) == static_cast<size_t>(Fault::Count));
 
@@ -70,6 +74,9 @@ namespace comp::game::fault_report
 
 		std::mutex g_mutex;
 		std::string g_details[static_cast<size_t>(Fault::Count)];
+		// Technical lines for the notice's collapsed Details, per fault.
+		std::string g_notes[static_cast<size_t>(Fault::Count)];
+		bool g_channel_sent = false;
 		bool g_reported[static_cast<size_t>(Fault::Count)] = {};
 		bool g_dirty = false;
 		UINT g_frames = 0;
@@ -139,26 +146,31 @@ namespace comp::game::fault_report
 			std::error_code ec;
 			std::filesystem::remove(std::filesystem::path(g_marker), ec);
 
-			std::string text = g_crash_header + ".";
+			// The sentence the player reads is in kKinds; the rest is for Details.
+			std::string notes = g_crash_header + ".";
 			const std::wstring zip = session_archive::zip_for(g_crash_time);
 			// The notice names the zip itself (rtx.faultNotice.uploadFile), with a
 			// button that shows it in Explorer.
 			if (!zip.empty())
 			{
 				const std::string path = session_files::utf8(zip);
-				text += " Upload only the file named below; it holds that session's logs, crash log and any crash dump.";
+				notes += " The file holds that session's logs, crash log and any crash dump.";
 				shared::common::log_event("Session", std::format("the file to upload for the crashed session: {}", path),
 					shared::common::LOG_TYPE::LOG_TYPE_STATUS);
 				std::lock_guard lock(g_mutex);
 				g_upload_file = path;
 			}
 			else
-				text += std::format(" Upload remix-comp.prev.log{} from the log folder below.",
+				notes += std::format(" The session's file could not be found. Send remix-comp.prev.log{} from the log folder.",
 					g_crash_file.empty() ? std::string() : " and " + g_crash_file);
 			if (session_archive::folder_unknown())
-				text += " Mod Organizer 2 runs the game: if Explorer does not show the file there, look in Mod "
+				notes += " Mod Organizer 2 runs the game: if Explorer does not show the file there, look in Mod "
 					"Organizer 2's Overwrite folder.";
-			report(Fault::GameCrashed, text);
+			{
+				std::lock_guard lock(g_mutex);
+				g_notes[static_cast<size_t>(Fault::GameCrashed)] = notes;
+			}
+			report(Fault::GameCrashed, std::string());
 		}
 
 		// In game and settled, and for kEmptySceneMs nearly every world draw
@@ -194,8 +206,8 @@ namespace comp::game::fault_report
 				g_dirty = false;
 				for (size_t i = 0; i < std::size(kKinds); i++)
 					if (g_reported[i])
-						lines += std::format("{}|{}{}{}\n", kKinds[i].id, kKinds[i].text, g_details[i].empty() ? "" : " ",
-							g_details[i]);
+						lines += std::format("{}|{}{}{}|{}\n", kKinds[i].id, kKinds[i].text, g_details[i].empty() ? "" : " ",
+							g_details[i], g_notes[i]);
 				upload = g_upload_file;
 			}
 			// The runtime's config parser keeps a value as sent, but takes no
@@ -253,7 +265,15 @@ namespace comp::game::fault_report
 
 		if (g_frames >= kWarmupFrames && shared::common::remix_api::is_initialized() &&
 			shared::common::remix_api::get().m_bridge.SetConfigVariable)
+		{
+			// Where the notice and the Report a problem line tell the player to send a file.
+			if (!g_channel_sent)
+			{
+				g_channel_sent = true;
+				shared::common::remix_api::get().m_bridge.SetConfigVariable("rtx.faultNotice.supportChannel", "#fnv-issues");
+			}
 			send();
+		}
 	}
 
 	void on_crash(const char* header, const char* crash_file)

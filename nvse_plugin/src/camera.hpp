@@ -4,8 +4,10 @@
 // Loading, cuts and the world camera.
 //
 // Loading: a load message pair (PreLoadGame .. PostLoadGame), loading-screen
-// presents (OnFramePresent with isLoadingScreen = 1) or the LoadingMenu
-// existing. A cut requested while loading waits for the load to end, so a
+// presents (OnFramePresent with isLoadingScreen = 1) during one, or the
+// LoadingMenu existing. RenderMenu 0x713FB0 sends that present for any
+// out-of-frame menu render (0x7147C4), so one outside a load is not passed on
+// (load_on). A cut requested while loading waits for the load to end, so a
 // door, fast travel or a save load is one cut.
 //
 // The world camera is the "World" SceneGraph's NiCamera, read at the call:
@@ -28,6 +30,8 @@ namespace fnvr::camera
 	void update();
 
 	bool loading();
+	// A load message pair is open or the LoadingMenu exists. Any thread.
+	bool load_on();
 	bool settled();
 	bool in_world();
 	uint32_t cut_serial();

@@ -35,6 +35,10 @@
 // instead, and a mod that hooks the site later finds a call to chain from
 // (call_chain.hpp).
 //
+// The screen's blood splatter is drawn after the world's image-space work, just
+// before the boundary, with a perspective camera of its own (passes 0x2F0 and
+// 0x2F1): it counts as UI too.
+//
 // In a frame that rendered the world, every draw from the boundary to Present
 // is UI: the wrapper triggers the injection at the first one that targets the
 // back buffer (a degenerate orthographic fixed-function draw, which the
@@ -47,12 +51,14 @@
 // other menus over a frozen background with its tint, terminals, the menu 3D
 // scenes) draws its background before the boundary with the game's shaders.
 // An injection at the boundary would write the path-traced image over it, so
-// such frames use menu_scene's raster frames and rtx.uiTextures instead.
+// such frames use menu_scene's raster frames instead.
 //
-// Not covered: loading screens (drawn and presented by
-// InterfaceManager_Render outside Main_Render) and the modal message-box loop
-// 0x704010. A site that holds anything but a call to executable code leaves
-// the hook off and rtx.uiTextures in charge.
+// A frame with no world and no background also draws only the interface: the
+// main menu, loading screens (drawn and presented by InterfaceManager_Render
+// outside Main_Render) and the modal message-box loop 0x704010. Every tile,
+// whatever its texture, is the engine's pass 0x2F5, so the first one makes the
+// frame a raster frame (no_world_ui_draw). A site that holds anything but a
+// call to executable code leaves the hook off and rtx.uiTextures in charge.
 namespace comp::game::ui_boundary
 {
 	// Installs the three call-site redirects once (all or none), chaining
@@ -60,9 +66,12 @@ namespace comp::game::ui_boundary
 	// one more per chained or foreign site.
 	void install();
 
-	// The boundary was passed in a frame that rendered the world: the draw
-	// being made is UI.
+	// The frame rendered the world, and the boundary was passed or the draw
+	// being made is the screen's blood splatter: the draw is UI.
 	bool in_ui();
+
+	// The draw being made is a tile, in a frame that rendered no world.
+	bool no_world_ui_draw();
 
 	// Every draw while in_ui(), before it is made: triggers the runtime's RTX
 	// injection at the first one to a screen-sized target and counts it.

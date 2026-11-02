@@ -77,6 +77,8 @@ namespace comp::game::scene_graph
 		constexpr uint32_t RS_niNode = 0x14;                // U
 		constexpr uint32_t OBJ_controller = 0x0C;           // U: NiObjectNET controller
 		constexpr uint32_t AV_parent = 0x18;
+		constexpr uint32_t AV_worldBound = 0x20;            // NiBound*: radius at +0x0C (0xA5DBE3)
+		constexpr uint32_t BOUND_radius = 0x0C;
 		constexpr uint32_t AV_flags = 0x30;                 // bit 0 app-culled
 		constexpr uint32_t AV_worldRot = 0x68;
 		constexpr uint32_t AV_worldPos = 0x8C;
@@ -248,6 +250,9 @@ namespace comp::game::scene_graph
 
 	// Parent (+0x18) and flags (+0x30) of an NiAVObject, one guarded read.
 	bool read_link(uintptr_t obj, uintptr_t& parent, uint32_t& flags);
+	// The object has a world bound with a radius other than 0. The engine's
+	// cull skips the object or subtree otherwise (0xA694E0, 0xA5DBE0).
+	bool has_world_bound(uintptr_t obj);
 
 	struct NodeChildren
 	{

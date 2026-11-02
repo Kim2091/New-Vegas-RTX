@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "game_ini.hpp"
 
+#include "call_chain.hpp"
 #include "shared/common/config.hpp"
 #include "shared/fnv_exe.hpp"
 
@@ -183,6 +184,43 @@ namespace comp::game::game_ini
 		}
 
 		bool g_done = false;
+
+		// What apply() changed, so a write to the INI files can keep the player's values.
+		struct Forced
+		{
+			uintptr_t addr = 0;
+			uint32_t original = 0;
+			size_t size = 0;
+		};
+		std::vector<Forced> g_forced;
+
+		using SettingsWrite_t = bool(__fastcall*)(void* self, void* edx, const char* path);
+		SettingsWrite_t g_orig_settings_write = nullptr;
+
+		// The engine writes a whole collection back: FalloutPrefs.ini at a quit
+		// and after a settings menu, Fallout.ini on the console's SaveIniFiles.
+		bool __fastcall settings_write_hk(void* self, void* edx, const char* path)
+		{
+			std::vector<uint32_t> ours(g_forced.size());
+			for (size_t i = 0; i < g_forced.size(); i++)
+			{
+				get(g_forced[i].addr, ours[i]);
+				write(g_forced[i].addr, &g_forced[i].original, g_forced[i].size);
+			}
+			const bool r = g_orig_settings_write(self, edx, path);
+			for (size_t i = 0; i < g_forced.size(); i++) write(g_forced[i].addr, &ours[i], g_forced[i].size);
+			return r;
+		}
+	}
+
+	void install_hook()
+	{
+		if (!shared::common::config::get().get_bool("GameSettings", "Apply", true)) return;
+		if (!call_chain::hook_entry(fnv_exe::addr().settings_write, reinterpret_cast<void*>(&settings_write_hk),
+			reinterpret_cast<void**>(&g_orig_settings_write), "GameSettings", "the settings collection's INI write",
+			"the player's INI files keep their values only if that code still writes them"))
+			shared::common::log("GameSettings", "The INI write is not hooked: the mod's game settings can reach the player's "
+				"INI files", LT::LOG_TYPE_WARN, true);
 	}
 
 	void apply()
@@ -248,12 +286,13 @@ namespace comp::game::game_ini
 				continue;
 			}
 			changed++;
+			g_forced.push_back({ value_addr, old_raw, size });
 			details += std::format("{}{} {} -> {}", details.empty() ? "" : ", ", w.name, format_value(type, old_raw),
 				format_value(type, new_raw));
 		}
 
-		shared::common::log_event("GameSettings", std::format("Applied the mod's game settings in memory (the INI files are "
-			"not changed): {} changed, {} already set, {} left alone ({} + {} settings listed)", changed, same, missing,
+		shared::common::log_event("GameSettings", std::format("Applied the mod's game settings in memory (the INI files keep "
+			"the player's values): {} changed, {} already set, {} left alone ({} + {} settings listed)", changed, same, missing,
 			ini_nodes, renderer_nodes));
 		if (!details.empty()) shared::common::log_event("GameSettings", "Changed: " + details);
 	}

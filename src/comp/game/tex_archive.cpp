@@ -5,7 +5,8 @@
 #include <shlobj.h>
 
 /*
- * BSA v104 (Fallout 3 / New Vegas) layout, little-endian:
+ * BSA layout, little-endian (the game takes version 104 and below; below 104
+ * the archiveFlags 0x100 bit is ignored):
  *
  *   header (36 bytes)
  *     char[4] "BSA\0", u32 version = 104, u32 folderRecordOffset = 36,
@@ -91,6 +92,69 @@ namespace comp::game::tex_pack
 			return buf;
 		}
 
+		std::string my_games_folder()
+		{
+			char docs[MAX_PATH] = {};
+			if (FAILED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, docs))) return {};
+			return std::string(docs) + "\\My Games\\FalloutNV\\";
+		}
+
+		// What the game reads from a plugin's header to order it and load its archives.
+		struct PluginHeader
+		{
+			bool master = false;      // the header's ESM flag
+			bool has_masters = false;
+			FILETIME date = {};
+		};
+
+		// The record header is 24 bytes, its subrecords { char[4], u16 size, data }.
+		bool read_plugin_header(const std::string& path, PluginHeader& out)
+		{
+			WIN32_FILE_ATTRIBUTE_DATA attr = {};
+			if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attr)) return false;
+			out.date = attr.ftLastWriteTime;
+			std::ifstream f(path, std::ios::binary);
+			char head[24] = {};
+			if (!f.read(head, sizeof(head)) || std::memcmp(head, "TES4", 4) != 0) return false;
+			uint32_t size = 0, flags = 0;
+			std::memcpy(&size, head + 4, 4);
+			std::memcpy(&flags, head + 8, 4);
+			if (size > 1024u * 1024u) return false;
+			out.master = (flags & 1u) != 0;
+			std::vector<char> body(size);
+			if (size && !f.read(body.data(), size)) return false;
+			for (size_t p = 0; p + 6 <= body.size();)
+			{
+				if (std::memcmp(body.data() + p, "MAST", 4) == 0) { out.has_masters = true; break; }
+				uint16_t n = 0;
+				std::memcpy(&n, body.data() + p + 4, 2);
+				p += 6u + n;
+			}
+			return true;
+		}
+
+		// The game's archive list, highest priority first (0xAF4F82): an archive
+		// is ranked by the first of these its name holds, in this case. "Fallo"
+		// goes to the end. Any other goes before the first archive of a rank
+		// it outranks, or to the front when there is none.
+		void insert_archive(std::vector<std::string>& order, const std::string& name)
+		{
+			static constexpr const char* kRanks[] = { "Fallo", "DeadM", "Hones", "Lones", "OldWo", "Updat" };
+			auto holds = [](const std::string& s, const char* tag) { return s.find(tag) != std::string::npos; };
+			int rank = 6;
+			for (int i = 5; i >= 0; i--)
+				if (holds(name, kRanks[i])) rank = i;
+			if (rank == 0) { order.push_back(name); return; }
+			for (auto it = order.begin(); it != order.end(); ++it)
+				if (holds(*it, "Fallo") || holds(*it, "DeadM") || (rank > 1 && holds(*it, "Hones")) ||
+					(rank > 2 && holds(*it, "Lones")) || (rank > 3 && (holds(*it, "OldWo") || holds(*it, "Updat"))))
+				{
+					order.insert(it, name);
+					return;
+				}
+			order.insert(order.begin(), name);
+		}
+
 		bool read_at(void* handle, uint64_t offset, void* dst, uint32_t size)
 		{
 			LARGE_INTEGER li;
@@ -109,28 +173,20 @@ namespace comp::game::tex_pack
 			const std::string l = lower(name);
 			for (const auto& o : order)
 				if (lower(o) == l) return;
-			order.push_back(name);
+			insert_archive(order, name);
 		};
 
 		// ---- INI archive list -------------------------------------------------
 		std::string game_dir = data_dir;
 		if (game_dir.size() >= 5) game_dir.resize(game_dir.size() - 5);   // strip "Data\"
 
-		char docs[MAX_PATH] = {};
-		std::string my_games;
-		if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, docs)))
-			my_games = std::string(docs) + "\\My Games\\FalloutNV\\";
+		const std::string my_games = my_games_folder();
 
 		std::string list, from;
 		if (!my_games.empty())
 		{
-			list = ini_string(my_games + "FalloutCustom.ini", "Archive", "SArchiveList");
-			if (!list.empty()) from = my_games + "FalloutCustom.ini";
-			if (list.empty())
-			{
-				list = ini_string(my_games + "Fallout.ini", "Archive", "SArchiveList");
-				if (!list.empty()) from = my_games + "Fallout.ini";
-			}
+			list = ini_string(my_games + "Fallout.ini", "Archive", "SArchiveList");
+			if (!list.empty()) from = my_games + "Fallout.ini";
 		}
 		if (list.empty())
 		{
@@ -166,30 +222,44 @@ namespace comp::game::tex_pack
 				}
 			}
 		}
-		size_t plugin_bsas = 0;
+		// The game's order: masters first, then by file date.
+		struct Plugin { std::string name; PluginHeader header; };
+		std::vector<Plugin> loaded;
 		for (const auto& p : plugins)
 		{
-			const size_t dot = p.find_last_of('.');
-			const std::string stem = dot == std::string::npos ? p : p.substr(0, dot);
+			Plugin plugin{ p };
+			if (read_plugin_header(data_dir + p, plugin.header)) loaded.push_back(std::move(plugin));
+		}
+		std::stable_sort(loaded.begin(), loaded.end(), [](const Plugin& a, const Plugin& b) {
+			if (a.header.master != b.header.master) return a.header.master;
+			return CompareFileTime(&a.header.date, &b.header.date) < 0;
+		});
+
+		size_t plugin_bsas = 0;
+		for (const auto& p : loaded)
+		{
+			// A plugin with no masters loads no archives (0x463766).
+			if (!p.header.has_masters) continue;
+			const size_t dot = p.name.find_last_of('.');
+			const std::string stem = dot == std::string::npos ? p.name : p.name.substr(0, dot);
 			if (stem.empty()) continue;
-			if (file_exists(data_dir + stem + ".bsa")) { add(stem + ".bsa"); plugin_bsas++; }
 
 			WIN32_FIND_DATAA fd;
-			const HANDLE h = FindFirstFileA((data_dir + stem + " - *.bsa").c_str(), &fd);
+			const HANDLE h = FindFirstFileA((data_dir + stem + "*.bsa").c_str(), &fd);
 			if (h == INVALID_HANDLE_VALUE) continue;
-			std::vector<std::string> found;
 			do
 			{
-				if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) found.emplace_back(fd.cFileName);
+				if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+				if (!fd.nFileSizeLow && !fd.nFileSizeHigh) continue;
+				add(fd.cFileName);
+				plugin_bsas++;
 			} while (FindNextFileA(h, &fd));
 			FindClose(h);
-			std::sort(found.begin(), found.end());
-			for (const auto& n : found) { add(n); plugin_bsas++; }
 		}
 		detail += std::format(", {} active plugin(s) -> {} plugin archive(s)", plugins.size(), plugin_bsas);
 
 		const auto extras = split_list(extra);
-		for (const auto& e : extras) add(e);
+		for (const auto& e : extras) order.insert(order.begin(), e);
 		if (!extras.empty()) detail += std::format(", {} extra", extras.size());
 		return order;
 	}
@@ -200,10 +270,18 @@ namespace comp::game::tex_pack
 			if (a.handle) CloseHandle(a.handle);
 	}
 
-	void TextureFs::configure(std::string data_dir, std::vector<std::string> archives)
+	bool loose_files_win()
+	{
+		const std::string my_games = my_games_folder();
+		if (my_games.empty()) return true;
+		return GetPrivateProfileIntA("Archive", "bInvalidateOlderFiles", 1, (my_games + "Fallout.ini").c_str()) != 0;
+	}
+
+	void TextureFs::configure(std::string data_dir, std::vector<std::string> archives, bool loose_first)
 	{
 		data_dir_ = std::move(data_dir);
 		archive_names_ = std::move(archives);
+		loose_first_ = loose_first;
 	}
 
 	bool TextureFs::loose_exists(const std::string& rel) const
@@ -243,8 +321,9 @@ namespace comp::game::tex_pack
 		uint32_t hdr[9] = {};
 		if (!read_at(h, 0, hdr, sizeof(hdr))) return fail("short header");
 		if (hdr[0] != 0x00415342u) return fail("not a BSA");
-		if (hdr[1] != 104) return fail(std::format("unsupported version {}", hdr[1]).c_str());
-		const uint32_t flags = hdr[3], folders = hdr[4], files = hdr[5];
+		if (hdr[1] > 104) return fail(std::format("unsupported version {}", hdr[1]).c_str());
+		const uint32_t flags = hdr[1] < 104 ? hdr[3] & ~kFlagEmbedNames : hdr[3];
+		const uint32_t folders = hdr[4], files = hdr[5];
 		const uint32_t folder_names = hdr[6], file_names = hdr[7];
 		if (!(flags & kFlagDirNames) || !(flags & kFlagFileNames)) return fail("archive has no name tables");
 		if (folders > 1000000 || files > 4000000) return fail("implausible counts");
@@ -303,8 +382,8 @@ namespace comp::game::tex_pack
 			e.offset = r.offset;
 			e.size = r.size & kSizeMask;
 			e.compressed = ((flags & kFlagCompressed) != 0) != ((r.size & kSizeToggleCompress) != 0);
-			// Later archives override earlier ones, like the game's own load order.
-			index_[folder + "\\" + lower(fname)] = e;
+			// The game takes the first hit in its list.
+			index_.try_emplace(folder + "\\" + lower(fname), e);
 			added++;
 		}
 
@@ -320,9 +399,10 @@ namespace comp::game::tex_pack
 
 	TextureFs::Source TextureFs::locate(const std::string& rel)
 	{
-		if (loose_exists(rel)) return Source::Loose;
+		if (loose_first_ && loose_exists(rel)) return Source::Loose;
 		if (!indexed_) build_index();
-		return index_.count(rel) ? Source::Archive : Source::None;
+		if (index_.count(rel)) return Source::Archive;
+		return loose_exists(rel) ? Source::Loose : Source::None;
 	}
 
 	bool TextureFs::read(const std::string& rel, std::vector<uint8_t>& out, Source& src, std::string& err)
@@ -330,7 +410,8 @@ namespace comp::game::tex_pack
 		out.clear();
 		src = Source::None;
 
-		if (loose_exists(rel))
+		if (!loose_first_ && !indexed_) build_index();
+		if ((loose_first_ || !index_.count(rel)) && loose_exists(rel))
 		{
 			std::ifstream f(data_dir_ + rel, std::ios::binary | std::ios::ate);
 			if (!f) { err = "loose file open failed"; stats_.read_errors++; return false; }

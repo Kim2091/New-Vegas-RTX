@@ -75,8 +75,10 @@ namespace fnvr::status
 			std::isfinite(p[2]))
 			std::memcpy(out.pos, p, sizeof(p));
 		strncpy_s(out.cell, describe(cell).c_str(), _TRUNCATE);
+		uint8_t cell_flags = 0;
 		uint32_t world = 0;
-		if (!guard::get(cell + engine::CELL_worldSpace, world) || !guard::plausible(world))
+		if (!guard::get(cell + engine::CELL_flags, cell_flags) || (cell_flags & engine::kCellFlag_Interior) ||
+			!guard::get(cell + engine::CELL_worldSpace, world) || !guard::plausible(world))
 		{
 			out.interior = 1;
 			return true;

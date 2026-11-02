@@ -72,9 +72,9 @@ namespace comp::game::session_archive
 	// The archive folder as Explorer finds it, with a trailing backslash.
 	std::wstring archive_folder();
 
-	// The newest zip in the archive folder, whoever wrote it (this process,
-	// an earlier one or NewVegasRTX-Reporter.exe), as Explorer finds it;
-	// empty when there is none.
+	// The newest zip in the archive folder by the session time in its name,
+	// whoever wrote it (this process, an earlier one or NewVegasRTX-Reporter.exe),
+	// as Explorer finds it; empty when there is none.
 	std::wstring newest_zip();
 
 	// Mod Organizer 2's virtual file system is loaded and its redirections

@@ -1084,7 +1084,7 @@ namespace comp::game::api::textures
 	}
 
 	bool read_bgra8(IDirect3DBaseTexture9* base, uint32_t& width, uint32_t& height, uint32_t& levels,
-		std::vector<uint8_t>& out, const char*& reject)
+		std::vector<uint8_t>& out, const char*& reject, uint32_t max_size)
 	{
 		out.clear();
 		if (!base) { reject = "texture slot empty"; return false; }
@@ -1099,12 +1099,16 @@ namespace comp::game::api::textures
 		}
 		FormatInfo fi;
 		if (!format_info(d.Format, fi)) { reject = "unsupported texture format"; return false; }
-		width = d.Width;
-		height = d.Height;
-		levels = (std::max)(1ul, t->GetLevelCount());
+		const uint32_t level_count = (std::max)(1ul, t->GetLevelCount());
+		uint32_t first = 0;
+		if (max_size)
+			while (first + 1 < level_count && (std::max)(d.Width >> first, d.Height >> first) > max_size) first++;
+		width = (std::max)(1u, d.Width >> first);
+		height = (std::max)(1u, d.Height >> first);
+		levels = level_count - first;
 
 		std::vector<uint8_t> row;
-		for (uint32_t l = 0; l < levels; l++)
+		for (uint32_t l = first; l < level_count; l++)
 		{
 			const uint32_t w = (std::max)(1u, d.Width >> l), h = (std::max)(1u, d.Height >> l);
 			uint32_t rows, src_row, dst_row;

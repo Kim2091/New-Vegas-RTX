@@ -852,11 +852,17 @@ namespace comp::game::api::material
 			if (!fg_offset || !fg_tint)
 			{
 				if (!unreadable) return decline(Decline::Texture);
+				D3DSURFACE_DESC fd = {};
+				IDirect3DBaseTexture9* failed = fg_offset ? md.facegen1 : md.facegen0;
+				if (failed->GetType() == D3DRTYPE_TEXTURE) static_cast<IDirect3DTexture9*>(failed)->GetLevelDesc(0, &fd);
+				const std::string detail = std::format("{}; FaceGenMap{}, {}x{}, format {}, pool {}, usage 0x{:X}, {} levels",
+					reject ? reject : "?", fg_offset ? 1 : 0, fd.Width, fd.Height, static_cast<int>(fd.Format),
+					static_cast<int>(fd.Pool), fd.Usage, failed->GetLevelCount());
 				static std::unordered_set<std::string> s_logged;
-				if (s_logged.size() < 16 && s_logged.insert(reject ? reject : "").second)
+				if (s_logged.size() < 16 && s_logged.insert(detail).second)
 					shared::common::log("RemixApi", std::format("FaceGen: unexpected: a FaceGen map can't be read ({}; "
 						"face maps are kept MANAGED, so this one was not loaded from textures\\characters\\facemods\\ by the "
-						"engine's texture file load) -- the skin shows its BaseMap alone", reject ? reject : "?"),
+						"engine's texture file load) -- the skin shows its BaseMap alone", detail),
 						shared::common::LOG_TYPE::LOG_TYPE_WARN, true);
 				facegen = false;
 			}

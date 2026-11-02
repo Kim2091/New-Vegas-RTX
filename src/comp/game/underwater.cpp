@@ -204,7 +204,7 @@ namespace comp::game::underwater
 		// while the stable origin is off).
 		double base_z = 0.0;
 		if (stable_origin::active()) base_z = stable_origin::origin()[2];
-		else if (camera_position_ptr && std::isfinite(camera_position_ptr[2])) base_z = camera_position_ptr[2];
+		else if (camera_position() && std::isfinite(camera_position()[2])) base_z = camera_position()[2];
 		else { all_off("no camera"); return; }
 
 		const bool under = f.underwater != 0;

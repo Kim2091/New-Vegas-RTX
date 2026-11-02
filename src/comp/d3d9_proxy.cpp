@@ -83,15 +83,28 @@ namespace d3d9_proxy
 	bool passthrough() { return passthrough_; }
 
 	// The bridge client starts the renderer from .trex\NvRemixBridge.exe, or trex\ (Mod Organizer 2's Root Builder
-	// skips names that start with a dot). Returns true when either exists in the game folder.
-	static bool renderer_installed()
+	// skips names that start with a dot). Returns the one it starts, empty when neither is in the game folder.
+	static std::string renderer_path()
 	{
 		for (const char* dir : { "\\.trex\\", "\\trex\\" })
 		{
 			const std::string path = shared::globals::root_path + dir + "NvRemixBridge.exe";
-			if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+			if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) return path;
 		}
-		return false;
+		return {};
+	}
+
+	// The version the bridge built into a client or server binary, empty when it can't be read.
+	static std::string bridge_version(const std::string& path)
+	{
+		static constexpr std::string_view kMarker = "remix-main+";
+		static constexpr size_t kHashLength = 8;
+		std::ifstream file(path, std::ios::binary);
+		if (!file) return {};
+		const std::string data(std::istreambuf_iterator<char>(file), {});
+		const size_t at = data.find(kMarker);
+		if (at == std::string::npos || at + kMarker.size() + kHashLength > data.size()) return {};
+		return data.substr(at, kMarker.size() + kHashLength);
 	}
 
 	// Tells the player in a message box, from its own thread so the game keeps loading.
@@ -106,18 +119,41 @@ namespace d3d9_proxy
 		return 0;
 	}
 
+	static DWORD WINAPI renderer_mismatch_box(LPVOID)
+	{
+		MessageBoxW(nullptr,
+			L"New Vegas RTX found renderer files from two different versions: d3d9_remix.dll does not match "
+			L"NvRemixBridge.exe in the .trex folder. This usually means an old .trex folder is still there.\n\nThe game "
+			L"starts without RTX. Delete the .trex and trex folders from the game folder, then install the mod again. With "
+			L"Mod Organizer 2, delete them from the real game folder and turn off any older version of the mod.",
+			L"New Vegas RTX", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+		return 0;
+	}
+
 	bool init()
 	{
 		auto& cfg = shared::common::config::get();
+		const bool use_remix = cfg.remix.enabled && !cfg.remix.dll_name.empty();
+		const std::string renderer = use_remix ? renderer_path() : std::string{};
+		// The bridge server refuses to run with a client from another commit, and the game closes with it.
+		const std::string client_version = !renderer.empty() ? bridge_version(shared::globals::root_path + "\\" + cfg.remix.dll_name) : std::string{};
+		const std::string server_version = !client_version.empty() ? bridge_version(renderer) : std::string{};
 
 		// The Remix bridge first ([Remix] DLLName, default d3d9_remix.dll).
-		if (cfg.remix.enabled && !cfg.remix.dll_name.empty() && !renderer_installed())
+		if (use_remix && renderer.empty())
 		{
 			shared::common::log("Proxy", "The renderer is missing: no .trex\\NvRemixBridge.exe or trex\\NvRemixBridge.exe in the "
 				"game folder. The game starts with the system d3d9, without RTX.", shared::common::LOG_TYPE::LOG_TYPE_ERROR);
 			if (const auto t = CreateThread(nullptr, 0, renderer_missing_box, nullptr, 0, nullptr); t) CloseHandle(t);
 		}
-		else if (cfg.remix.enabled && !cfg.remix.dll_name.empty())
+		else if (!server_version.empty() && server_version != client_version)
+		{
+			shared::common::log("Proxy", std::format("The renderer files are from different versions: {} is {}, {} is {}. The game "
+				"starts with the system d3d9, without RTX.", cfg.remix.dll_name, client_version, renderer, server_version),
+				shared::common::LOG_TYPE::LOG_TYPE_ERROR);
+			if (const auto t = CreateThread(nullptr, 0, renderer_mismatch_box, nullptr, 0, nullptr); t) CloseHandle(t);
+		}
+		else if (use_remix)
 		{
 			chain_module_ = LoadLibraryA(cfg.remix.dll_name.c_str());
 			if (chain_module_)

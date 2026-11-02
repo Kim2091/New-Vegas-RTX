@@ -44,6 +44,8 @@ namespace fnvr::integrity
 			{ &fnv_exe::Addresses::xnvse_main_present, 5, FNVR_F_LOADING, Kind::Xnvse, "main present (OnFramePresent 0)", {}, false, false },
 			{ &fnv_exe::Addresses::xnvse_loading_present, 5, FNVR_F_LOADING, Kind::Xnvse, "loading present (OnFramePresent 1)", {}, false, false },
 			{ &fnv_exe::Addresses::xnvse_main_loop, 5, FNVR_F_LOADING, Kind::Xnvse, "main loop (MainGameLoop)", {}, false, false },
+			{ &fnv_exe::Addresses::xnvse_form_load, 5, 0, Kind::Xnvse, "form load (OnNonPersistentFormLoad)", {}, false, false },
+			{ &fnv_exe::Addresses::xnvse_form_unload, 5, FNVR_F_OWNERS, Kind::Xnvse, "form unload (OnNonPersistentFormUnload)", {}, false, false },
 			// The wrapper's hooks.
 			{ &fnv_exe::Addresses::render_pass_dispatch, 5, FNVR_F_HOOK_P1, Kind::Wrapper, "P1 render-pass dispatcher", {}, false, false },
 			{ &fnv_exe::Addresses::ni_geometry_dtor, 5, FNVR_F_HOOK_P2, Kind::Wrapper, "P2 ~NiGeometry", {}, false, false },

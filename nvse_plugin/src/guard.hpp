@@ -24,10 +24,13 @@ namespace fnvr::guard
 	}
 
 	// The main thread's cache of checked runs (one VirtualQuery result each)
-	// is dropped once per main-loop frame and after a read that faults: memory
-	// freed since is not trusted past the frame it was checked in (a read in it
-	// still runs under SEH).
+	// is dropped once per frame and after a read that faults: memory freed
+	// since is not trusted past the frame it was checked in (a read in it still
+	// runs under SEH). The main present drops it. The main loop and the wrapper's
+	// first read of a frame drop it too when no present has since they last
+	// asked (new_frame_once), so it keeps refreshing with one of them missing.
 	void new_frame();
+	void new_frame_once(uint32_t& seen);
 
 	// The highest address this process can use: 0x7FFEFFFF normally, and close to 4 GB for a
 	// large-address-aware game (the 4GB patch) on 64-bit Windows, whose heap does go above 2 GB.

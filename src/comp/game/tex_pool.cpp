@@ -5,6 +5,7 @@
 
 #include "api_textures.hpp"
 #include "call_chain.hpp"
+#include "fault_report.hpp"
 #include "shared/common/config.hpp"
 #include "shared/fnv_exe.hpp"
 
@@ -14,7 +15,12 @@ namespace comp::game::tex_pool
 	{
 		std::atomic<uint64_t> g_promoted{ 0 }, g_promoted_bytes{ 0 };
 		std::atomic<uint64_t> g_kept{ 0 }, g_kept_bytes{ 0 };
-		std::atomic<uint64_t> g_by_switch{ 0 }, g_by_format{ 0 }, g_by_autogen{ 0 }, g_by_import{ 0 }, g_by_facegen{ 0 };
+		std::atomic<uint64_t> g_by_switch{ 0 }, g_by_format{ 0 }, g_by_autogen{ 0 }, g_by_import{ 0 }, g_by_facegen{ 0 }, g_by_small{ 0 };
+
+		// The largest side of a texture that is always created MANAGED. Some face
+		// maps this size are created outside the FaceGen hooks, and a CPU copy
+		// of one costs under 6 KiB.
+		constexpr UINT kSmallTextureSize = 32;
 
 		// The engine's D3DX texture file load (fnv_exe texture_from_file). A
 		// thread-local flag says the texture it creates is a FaceGen face map.
@@ -45,10 +51,11 @@ namespace comp::game::tex_pool
 		// An NPC's FaceGen face map:
 		// "data\Textures\Characters\FaceMods\<plugin>\<form id>_<n>.dds"
 		// (TESNPC's face texture path, 0x604310). The engine's FaceGen export
-		// writes that folder, so mods ship their face maps there too.
+		// writes that folder, so mods ship their face maps there too. Bodies and
+		// hands load theirs from "data\Textures\Characters\BodyMods\" (0x6148F0).
 		bool is_facegen_map(const char* path)
 		{
-			return in_folder(path, "characters?facemods?");
+			return in_folder(path, "characters?facemods?") || in_folder(path, "characters?bodymods?");
 		}
 
 		// A hair texture ("data\Textures\Characters\Hair\..."), with [RemixApi]
@@ -301,17 +308,45 @@ namespace comp::game::tex_pool
 			}
 		}
 
-		// NVTF's own settings, when its ini is in the usual place.
+		// A value in NVTF's ini, read as a plain file so one Mod Organizer 2 maps
+		// into Data is read like any other. -1: no such file or key.
+		int nvtf_value(const char* section, const char* key)
+		{
+			std::ifstream in{ std::filesystem::path(shared::globals::root_path) / "Data" / "NVSE" / "Plugins" / "nvtf.ini" };
+			std::string line;
+			bool in_section = false;
+			const auto trim = [](std::string s) {
+				const size_t a = s.find_first_not_of(" \t\r");
+				if (a == std::string::npos) return std::string();
+				return s.substr(a, s.find_last_not_of(" \t\r") - a + 1);
+			};
+			while (std::getline(in, line))
+			{
+				line = trim(line.substr(0, line.find(';')));
+				if (line.empty()) continue;
+				if (line.front() == '[')
+				{
+					in_section = line.back() == ']' && _stricmp(line.substr(1, line.size() - 2).c_str(), section) == 0;
+					continue;
+				}
+				const size_t eq = line.find('=');
+				if (in_section && eq != std::string::npos && _stricmp(trim(line.substr(0, eq)).c_str(), key) == 0)
+					return std::atoi(trim(line.substr(eq + 1)).c_str());
+			}
+			return -1;
+		}
+
+		std::string nvtf_settings()
+		{
+			auto v = [](int x) { return x < 0 ? std::string("unset") : std::to_string(x); };
+			return std::format("nvtf.ini: bModifyDirectXBehavior={} bUseDefaultPoolForTextures={}",
+				v(nvtf_value("Main", "bModifyDirectXBehavior")), v(nvtf_value("DirectX", "bUseDefaultPoolForTextures")));
+		}
+
+		// NVTF's own settings, as the textures line ends them.
 		std::string nvtf_note()
 		{
-			const std::filesystem::path ini = std::filesystem::path(shared::globals::root_path) / "Data" / "NVSE" / "Plugins" / "nvtf.ini";
-			std::error_code ec;
-			if (!std::filesystem::exists(ini, ec)) return {};
-			const std::string p = ini.string();
-			const int dx = static_cast<int>(GetPrivateProfileIntA("Main", "bModifyDirectXBehavior", -1, p.c_str()));
-			const int pool = static_cast<int>(GetPrivateProfileIntA("DirectX", "bUseDefaultPoolForTextures", -1, p.c_str()));
-			auto v = [](int x) { return x < 0 ? std::string("unset") : std::to_string(x); };
-			return std::format(" | nvtf.ini: bModifyDirectXBehavior={} bUseDefaultPoolForTextures={}", v(dx), v(pool));
+			return " | " + nvtf_settings();
 		}
 	}
 
@@ -323,7 +358,7 @@ namespace comp::game::tex_pool
 			!(usage & ~static_cast<DWORD>(D3DUSAGE_AUTOGENMIPMAP));
 	}
 
-	D3DPOOL texture_pool(D3DRESOURCETYPE type, D3DPOOL pool, DWORD usage, D3DFORMAT format,
+	D3DPOOL texture_pool(D3DRESOURCETYPE type, UINT width, UINT height, D3DPOOL pool, DWORD usage, D3DFORMAT format,
 		const HANDLE* shared_handle, bool ex_device)
 	{
 		if (!plain_default(pool, usage, shared_handle, ex_device)) return pool;
@@ -340,6 +375,11 @@ namespace comp::game::tex_pool
 		if (loading_facegen_map())
 		{
 			g_by_facegen.fetch_add(1, std::memory_order_relaxed);
+			return D3DPOOL_MANAGED;
+		}
+		if (width <= kSmallTextureSize && height <= kSmallTextureSize)
+		{
+			g_by_small.fetch_add(1, std::memory_order_relaxed);
 			return D3DPOOL_MANAGED;
 		}
 		if (usage & D3DUSAGE_AUTOGENMIPMAP)
@@ -404,6 +444,7 @@ namespace comp::game::tex_pool
 		s.by_autogen = g_by_autogen.load(std::memory_order_relaxed);
 		s.by_import = g_by_import.load(std::memory_order_relaxed);
 		s.by_facegen = g_by_facegen.load(std::memory_order_relaxed);
+		s.by_small = g_by_small.load(std::memory_order_relaxed);
 		return s;
 	}
 
@@ -539,6 +580,18 @@ namespace comp::game::tex_pool
 		return true;
 	}
 
+	void check_default_pool()
+	{
+		// With the switch on, the world's first load alone asks for hundreds.
+		constexpr uint64_t kFewRequests = 16;
+		static std::atomic_bool s_checked = false;
+		if (s_checked.exchange(true) || !GetModuleHandleW(L"NVTF.dll")) return;
+		const Stats s = stats();
+		if (s.kept + s.promoted < kFewRequests)
+			fault_report::report(fault_report::Fault::DefaultPoolOff, std::format("({}; {} textures asked for the default pool)",
+				nvtf_settings(), s.kept + s.promoted));
+	}
+
 	void log_once()
 	{
 		const Stats s = stats();
@@ -554,10 +607,10 @@ namespace comp::game::tex_pool
 		}
 		shared::common::log_event("Textures", std::format(
 			"{} textures requested in D3DPOOL_DEFAULT stay DEFAULT ({:.0f} MiB the bridge client keeps no CPU copy of) and "
-			"reach Remix by import; {} were created MANAGED ({:.0f} MiB: FaceGen face maps {}, format {}, autogen mips {}, "
+			"reach Remix by import; {} were created MANAGED ({:.0f} MiB: FaceGen face maps {}, small {}, format {}, autogen mips {}, "
 			"import unavailable or not yet asked {}){}",
 			s.kept, static_cast<double>(s.kept_bytes) / (1024.0 * 1024.0), s.promoted,
-			static_cast<double>(s.promoted_bytes) / (1024.0 * 1024.0), s.by_facegen, s.by_format, s.by_autogen, s.by_import,
+			static_cast<double>(s.promoted_bytes) / (1024.0 * 1024.0), s.by_facegen, s.by_small, s.by_format, s.by_autogen, s.by_import,
 			nvtf_note()));
 	}
 }

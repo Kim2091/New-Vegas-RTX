@@ -8,6 +8,8 @@
 #include "api_material.hpp"
 #include "nvse_link.hpp"
 #include "pipboy_cursor.hpp"
+#include "scene_graph.hpp"
+#include "shared/fnv_exe.hpp"
 #include "tex_pool.hpp"
 
 #include <algorithm>
@@ -767,12 +769,46 @@ namespace comp::game::api
 		return base && marker && marker[0] && module_has_bytes(base, marker, std::strlen(marker));
 	}
 
+	// The geometry being rendered hangs under the player's first-person node,
+	// which holds the Pip-Boy's model, screen and arm (PlayerCharacter::GetNode
+	// 0x950BB0).
+	static bool geometry_under_first_person_node()
+	{
+		constexpr uint32_t kPlayerFirstPersonNode = 0x694;
+		constexpr int kMaxDepth = 64;
+		static uintptr_t s_geo = 0;
+		static UINT s_frame = 0;
+		static bool s_under = false;
+		const uintptr_t geo = scene_graph::current_geometry();
+		if (!geo) return false;
+		const UINT frame = shared::common::ffp_state::get().frame_count();
+		if (geo == s_geo && frame == s_frame) return s_under;
+		s_geo = geo;
+		s_frame = frame;
+		s_under = false;
+		uint32_t player = 0, node = 0;
+		if (!scene_graph::read_u32(fnv_exe::addr().player, player) || !player ||
+			!scene_graph::read_u32(player + kPlayerFirstPersonNode, node) || !node)
+			return false;
+		uintptr_t obj = geo;
+		for (int depth = 0; obj && depth < kMaxDepth; ++depth)
+		{
+			if (obj == node) { s_under = true; break; }
+			uintptr_t parent = 0;
+			uint32_t flags = 0;
+			if (!scene_graph::read_link(obj, parent, flags)) break;
+			obj = parent;
+		}
+		return s_under;
+	}
+
 	bool pipboy_own_draw()
 	{
-		if (!nvse_link::linked()) return false;
-		// The Pip-Boy's model, screen and arm render with its zoomed
-		// projection; the world behind it renders with the world one.
-		return nvse_link::facts().pipboy != FNVR_PB_CLOSED && game::uses_viewmodel_projection();
+		if (!nvse_link::linked() || nvse_link::facts().pipboy == FNVR_PB_CLOSED) return false;
+		// The projection test also covers a draw with no engine geometry. It
+		// can't do the whole job: the Pip-Boy's FOV is a setting that can sit
+		// within 5% of the world's, and a frame with no world has no reference.
+		return geometry_under_first_person_node() || game::uses_viewmodel_projection();
 	}
 
 	bool pipboy_draw()

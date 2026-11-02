@@ -77,6 +77,11 @@ namespace comp::game::session_log
 		// committed): module images, mapped views (the bridge's shared-memory
 		// channels among them) and private memory (every heap). Allocates
 		// nothing.
+		constexpr size_t kAllocClasses = 6;
+		constexpr uint64_t kAllocClassLimitMib[kAllocClasses - 1] = { 1, 8, 16, 64, 256 };
+		constexpr const char* kAllocClassNames[kAllocClasses] = { "<1", "1-8", "8-16", "16-64", "64-256", "256+" };
+		constexpr size_t kLargestAllocations = 5;
+
 		struct AddressSpace
 		{
 			uint32_t used_mib = 0;
@@ -85,7 +90,35 @@ namespace comp::game::session_log
 			uint32_t image_mib = 0;
 			uint32_t mapped_mib = 0;
 			uint32_t private_mib = 0;
+			// Private memory by allocation (one reservation, its committed and
+			// reserved parts together): committed pages, and the size classes
+			// of kAllocClassNames.
+			uint32_t private_committed_mib = 0;
+			uint32_t class_count[kAllocClasses] = {};
+			uint64_t class_bytes[kAllocClasses] = {};
+			struct Allocation
+			{
+				uintptr_t base = 0;
+				uint64_t size = 0, committed = 0;
+			};
+			Allocation largest[kLargestAllocations];
 		};
+
+		void count_allocation(AddressSpace& a, const AddressSpace::Allocation& al)
+		{
+			if (!al.size) return;
+			size_t c = 0;
+			while (c < kAllocClasses - 1 && al.size >= kAllocClassLimitMib[c] << 20) c++;
+			a.class_count[c]++;
+			a.class_bytes[c] += al.size;
+			for (size_t i = 0; i < kLargestAllocations; i++)
+				if (al.size > a.largest[i].size)
+				{
+					for (size_t k = kLargestAllocations - 1; k > i; k--) a.largest[k] = a.largest[k - 1];
+					a.largest[i] = al;
+					break;
+				}
+		}
 
 		AddressSpace address_space()
 		{
@@ -100,18 +133,37 @@ namespace comp::game::session_log
 			uintptr_t p = reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
 			const uintptr_t end = reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
 			size_t largest = 0;
-			uint64_t image = 0, mapped = 0, priv = 0;
+			uint64_t image = 0, mapped = 0, priv = 0, committed = 0;
+			AddressSpace::Allocation al;
 			MEMORY_BASIC_INFORMATION mbi = {};
 			while (p < end && VirtualQuery(reinterpret_cast<LPCVOID>(p), &mbi, sizeof(mbi)))
 			{
 				if (mbi.State == MEM_FREE) largest = (std::max)(largest, static_cast<size_t>(mbi.RegionSize));
 				else if (mbi.Type == MEM_IMAGE) image += mbi.RegionSize;
 				else if (mbi.Type == MEM_MAPPED) mapped += mbi.RegionSize;
-				else if (mbi.Type == MEM_PRIVATE) priv += mbi.RegionSize;
+				else if (mbi.Type == MEM_PRIVATE)
+				{
+					priv += mbi.RegionSize;
+					const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+					if (base != al.base)
+					{
+						count_allocation(a, al);
+						al = {};
+						al.base = base;
+					}
+					al.size += mbi.RegionSize;
+					if (mbi.State == MEM_COMMIT)
+					{
+						al.committed += mbi.RegionSize;
+						committed += mbi.RegionSize;
+					}
+				}
 				const uintptr_t next = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
 				if (next <= p) break;
 				p = next;
 			}
+			count_allocation(a, al);
+			a.private_committed_mib = static_cast<uint32_t>(committed >> 20);
 			a.largest_free_mib = static_cast<uint32_t>(largest >> 20);
 			a.image_mib = static_cast<uint32_t>(image >> 20);
 			a.mapped_mib = static_cast<uint32_t>(mapped >> 20);
@@ -207,6 +259,25 @@ namespace comp::game::session_log
 				static_cast<double>(ts.promoted_bytes) / kMiB);
 		}
 
+		// Private memory by allocation size, and the largest allocations.
+		void memory_regions(const AddressSpace& a, char* out, size_t out_n)
+		{
+			size_t used = 0;
+			auto put = [&](const char* fmt, auto... args)
+				{
+					if (used >= out_n) return;
+					const int n = _snprintf_s(out + used, out_n - used, _TRUNCATE, fmt, args...);
+					used = n < 0 ? out_n : used + static_cast<size_t>(n);
+				};
+			put("private by allocation: committed %u of %u MiB; MiB size class count/MiB:", a.private_committed_mib, a.private_mib);
+			for (size_t i = 0; i < kAllocClasses; i++)
+				put(" %s %u/%.0f", kAllocClassNames[i], a.class_count[i], static_cast<double>(a.class_bytes[i]) / kMiB);
+			put("; largest:");
+			for (const AddressSpace::Allocation& al : a.largest)
+				if (al.size)
+					put(" 0x%08IX %.0f MiB (%.0f committed)", al.base, static_cast<double>(al.size) / kMiB, static_cast<double>(al.committed) / kMiB);
+		}
+
 		__declspec(noinline) void write_crash_block(EXCEPTION_POINTERS* ep, const char* crash_file)
 		{
 			const EXCEPTION_RECORD* er = ep->ExceptionRecord;
@@ -225,13 +296,15 @@ namespace comp::game::session_log
 				a.used_mib, a.total_mib, a.largest_free_mib);
 			char ours[256] = {};
 			memory_breakdown(a, ours, sizeof(ours));
+			char regions[512] = {};
+			memory_regions(a, regions, sizeof(regions));
 			char chain[1024] = {};
 			char scan[1024] = {};
 			if (ep->ContextRecord) describe_stack(ep->ContextRecord, chain, sizeof(chain), scan, sizeof(scan));
 			char crash_line[160] = {};
 			if (crash_file) _snprintf_s(crash_line, _TRUNCATE, "crash log: rtx-remix\\logs\\%s", crash_file);
 
-			const char* details[] = { cxx, memory, ours, chain, scan, crash_line };
+			const char* details[] = { cxx, memory, ours, regions, chain, scan, crash_line };
 			shared::common::log_write_recent(header, details, std::size(details));
 			fault_report::on_crash(header, crash_file);
 		}
@@ -445,14 +518,16 @@ namespace comp::game::session_log
 		{
 			char breakdown[512] = {};
 			memory_breakdown(a, breakdown, sizeof(breakdown));
+			char regions[512] = {};
+			memory_regions(a, regions, sizeof(regions));
 			const tex_pool::Stats ts = tex_pool::stats();
 			const api::textures::DefaultStats ds = api::textures::default_stats();
 			const bool keep = shared::common::config::get().remix_api.keep_default_pool_textures;
 			shared::common::log_event("Memory", std::format(
-				"{} | KeepDefaultPoolTextures={}, import {} | made MANAGED because: switch {}, FaceGen face map {}, format {}, "
+				"{} | {} | KeepDefaultPoolTextures={}, import {} | made MANAGED because: switch {}, FaceGen face map {}, format {}, "
 				"autogen mips {}, import unavailable or not yet asked {} | DEFAULT textures: captured {} (table {}), "
 				"imported {}, refused: no capture {}, import {}{}",
-				breakdown, keep ? 1 : 0, api::textures::import_available() ? "available" : "unavailable or not asked",
+				breakdown, regions, keep ? 1 : 0, api::textures::import_available() ? "available" : "unavailable or not asked",
 				ts.by_switch, ts.by_facegen, ts.by_format, ts.by_autogen, ts.by_import, ds.captured, ds.entries, ds.imports,
 				ds.uncaptured, ds.refused, api::textures::capture_failed() ? " | no capture ever worked: new ones are created MANAGED" : ""));
 		}
@@ -475,6 +550,7 @@ namespace comp::game::session_log
 				w.empty() ? std::string("not read") : w, device_light_count, api::retained::live_count(), f.owners, f.owner_geos,
 				a.used_mib, a.total_mib, a.largest_free_mib, warnings - g_warnings, errors - g_errors, held_back - g_held_back));
 			memory_line(a);
+			if (nvse_link::linked() && f.ready && f.game_state == FNVR_GS_IN_GAME && f.settled) tex_pool::check_default_pool();
 			g_warnings = warnings;
 			g_errors = errors;
 			g_held_back = held_back;

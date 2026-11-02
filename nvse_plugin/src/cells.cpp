@@ -42,10 +42,11 @@ namespace fnvr::cells
 			uint8_t type = 0;
 			if (!guard::plausible(cell) || !guard::get(cell + engine::FORM_type, type) || type != engine::kFormType_CELL)
 				return false;
+			uint8_t flags = 0;
 			uint32_t ws = 0;
-			if (!guard::get(cell + engine::CELL_worldSpace, ws)) return false;
+			if (!guard::get(cell + engine::CELL_flags, flags) || !guard::get(cell + engine::CELL_worldSpace, ws)) return false;
 			out.cell = cell;
-			out.interior = ws == 0;
+			out.interior = (flags & engine::kCellFlag_Interior) != 0;
 			out.world = out.interior ? cell : ws;
 			out.x = out.y = 0;
 			if (!out.interior)

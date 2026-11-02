@@ -38,7 +38,9 @@
  *     dispatcher, else the vertex buffer it streams into;
  *   * quads: 4 vertices and two triangles per particle, every quad with one
  *     index pattern; the quads may come in any order (a depth-sorted system
- *     reorders them through the index buffer); anything else is refused as
+ *     reorders them through the index buffer); a triangle strip (the ribbons
+ *     of BSStripParticleSystem) becomes the same quads, its vertices copied
+ *     per quad and degenerate triangles dropped; anything else is refused as
  *     topology, logged with the first indices;
  *   * not the Pip-Boy's own first-person draws while it is not closed
  *     (api::pipboy_draw); other first-person draws carry VIEW_MODEL;
@@ -166,20 +168,19 @@ namespace comp::game::api_submit
 		// The draw's index stream relative to the window's first vertex.
 		bool read_indices(IDirect3DDevice9* dev, const DrawDesc& d, std::vector<uint32_t>& out, const char*& reject)
 		{
+			if (d.type != D3DPT_TRIANGLELIST && d.type != D3DPT_TRIANGLESTRIP) { reject = "not a list or strip"; return false; }
+			const UINT count = d.type == D3DPT_TRIANGLELIST ? d.prim_count * 3 : d.prim_count ? d.prim_count + 2 : 0;
 			if (!d.indexed)
 			{
-				if (d.type != D3DPT_TRIANGLELIST) { reject = "non-indexed, not a list"; return false; }
-				out.resize(static_cast<size_t>(d.prim_count) * 3);
+				out.resize(count);
 				for (size_t i = 0; i < out.size(); i++) out[i] = static_cast<uint32_t>(i);
 				return true;
 			}
-			if (d.type != D3DPT_TRIANGLELIST) { reject = "indexed, not a list"; return false; }
 			IDirect3DIndexBuffer9* ib = nullptr;
 			if (FAILED(dev->GetIndices(&ib)) || !ib) { reject = "no index buffer"; return false; }
 			D3DINDEXBUFFER_DESC desc = {};
 			const bool ok_desc = SUCCEEDED(ib->GetDesc(&desc));
 			const UINT isz = desc.Format == D3DFMT_INDEX32 ? 4u : 2u;
-			const UINT count = d.prim_count * 3;
 			bool ok = ok_desc && (static_cast<uint64_t>(d.start_index) + count) * isz <= desc.Size;
 			if (!ok) reject = "index range overruns the buffer";
 			void* p = nullptr;
@@ -237,6 +238,44 @@ namespace comp::game::api_submit
 			return true;
 		}
 
+		// Index pattern of a quad made from two strip triangles.
+		constexpr uint8_t kStripPattern[6] = { 0, 1, 2, 2, 1, 3 };
+
+		// A triangle strip as quads in kStripPattern: each pair of neighbouring
+		// triangles takes 4 vertices of its own, keeping the strip's winding. A
+		// triangle without a neighbour repeats a vertex, which makes the quad's
+		// second triangle degenerate. Degenerate triangles of the strip (the
+		// stitches between ribbons) are dropped.
+		bool strip_to_quads(const std::vector<uint32_t>& idx, const std::vector<uint8_t>& verts, UINT stride, UINT count,
+			std::vector<uint8_t>& out, const char*& reject)
+		{
+			for (const uint32_t v : idx)
+				if (v >= count) { reject = "strip index outside the window"; return false; }
+			const size_t tris = idx.size() < 3 ? 0 : idx.size() - 2;
+			const auto solid = [&](size_t t) { return idx[t] != idx[t + 1] && idx[t + 1] != idx[t + 2] && idx[t] != idx[t + 2]; };
+			out.clear();
+			out.reserve(tris * 2 * stride);
+			for (size_t t = 0; t < tris;)
+			{
+				if (!solid(t)) { t++; continue; }
+				const uint32_t* s = idx.data() + t;
+				const bool pair = t + 1 < tris && solid(t + 1);
+				// Even: (s0, s1, s2) then (s2, s1, s3). Odd: (s1, s0, s2), the same
+				// as (s0, s2, s1), then (s1, s2, s3).
+				const bool odd = (t & 1) != 0;
+				const uint32_t b = odd ? s[2] : s[1];
+				const uint32_t c = odd ? s[1] : s[2];
+				const uint32_t quad[4] = { s[0], b, c, pair ? s[3] : c };
+				for (const uint32_t v : quad)
+				{
+					const uint8_t* p = verts.data() + static_cast<size_t>(v) * stride;
+					out.insert(out.end(), p, p + stride);
+				}
+				t += pair ? 2 : 1;
+			}
+			return true;
+		}
+
 		// A topology refusal with the start of the draw's index stream, for
 		// the once-per-(reason, shaders) log line.
 		std::string g_topology_detail;
@@ -281,7 +320,7 @@ namespace comp::game::api_submit
 			// This frame's quads, as the D3D9 copy would draw them.
 			const INT base = d.base;
 			const UINT skip = d.indexed ? d.min_vtx : 0u;
-			const UINT count = d.num_vtx;
+			UINT count = d.num_vtx;
 			if (!count) return refuse(Reason::Expand, "empty window");
 			vs_expand::ApiWindow win;
 			std::vector<uint8_t> verts;
@@ -298,7 +337,16 @@ namespace comp::game::api_submit
 			std::vector<uint32_t> idx;
 			if (!read_indices(dev, d, idx, reject)) return refuse(Reason::Topology, reject);
 			uint8_t pattern[6];
-			if (!quad_pattern(idx, count, pattern, reject)) return refuse(Reason::Topology, topology_detail(reject, idx));
+			if (d.type == D3DPT_TRIANGLESTRIP)
+			{
+				std::vector<uint8_t> quads;
+				if (!strip_to_quads(idx, verts, stride, count, quads, reject)) return refuse(Reason::Topology, topology_detail(reject, idx));
+				if (quads.empty()) return refuse(Reason::Topology, "a strip with no triangles");
+				verts = std::move(quads);
+				count = static_cast<UINT>(verts.size() / stride);
+				std::memcpy(pattern, kStripPattern, sizeof(pattern));
+			}
+			else if (!quad_pattern(idx, count, pattern, reject)) return refuse(Reason::Topology, topology_detail(reject, idx));
 			const UINT live = count / 4;
 			if (live > kMaxQuads) return refuse(Reason::TooMany);
 

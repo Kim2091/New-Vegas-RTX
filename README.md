@@ -87,6 +87,12 @@ wrapper's `d3d9.dll`.
   Vegas Reloaded and others) are not supported. `docs/INCOMPATIBLE_MODS.md`
   lists the known ones; the wrapper names any it recognises in its in-game
   notice and log.
+- With NVTF, set `bUseDefaultPoolForTextures = 1` under `[DirectX]` and
+  `bModifyDirectXBehavior = 1` under `[Main]` in
+  `Data\NVSE\Plugins\nvtf.ini`. With it off, every game texture keeps a copy
+  in the game's 4 GB of memory, and large mod lists can run out. NVTF's notes
+  say the setting can break Alt-Tab in exclusive fullscreen. The wrapper warns in
+  its in-game notice and log when it is off, and does not change it.
 
 ## Configuration
 

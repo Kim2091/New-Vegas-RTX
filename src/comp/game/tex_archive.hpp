@@ -5,23 +5,27 @@
 #include <vector>
 
 // Texture file resolution for texture-pack support: the game's loose Data
-// folder first, then its loaded BSA archives, the way the engine resolves a
-// texture path. It is a standalone reader for Fallout 3 / New Vegas BSA
-// version 104 and does not call the engine's own resolver.
+// folder and its loaded BSA archives, the way the engine resolves a texture
+// path. It is a standalone reader for Fallout 3 / New Vegas BSA version 104
+// and below, and does not call the engine's own resolver.
 //
 // Not thread-safe: owned by the texture-pack worker thread.
 
 namespace comp::game::tex_pack
 {
-	// Archive names in load order (lowest priority first), as the game would
-	// load them: [Archive] SArchiveList from Fallout.ini (FalloutCustom.ini
-	// overrides it, Fallout_default.ini is the fallback), Update.bsa when
-	// present and unlisted, then for every active plugin (plugins.txt, with
-	// FalloutNV.esm implied first) "<Plugin>.bsa" and "<Plugin> - *.bsa", then
-	// `extra` (comma-separated, from [TexturePacks] ExtraArchives).
-	// `detail` receives a human-readable account for the log.
+	// Archive names in the game's priority order (highest first), as it would
+	// load them: [Archive] SArchiveList from Fallout.ini (Fallout_default.ini is
+	// the fallback), Update.bsa when present and unlisted, then for every
+	// active plugin with masters (plugins.txt, masters first, then by file
+	// date) "<Plugin>*.bsa". `extra` (comma-separated, from [TexturePacks]
+	// ExtraArchives) goes in front of them all, its last entry first. `detail`
+	// receives a human-readable account for the log.
 	std::vector<std::string> discover_archives(const std::string& data_dir, const std::string& extra,
 		std::string& detail);
+
+	// [Archive] bInvalidateOlderFiles: a loose file beats an archive's copy.
+	// Without it, a loose file is used only when no archive has the path.
+	bool loose_files_win();
 
 	class TextureFs
 	{
@@ -41,15 +45,15 @@ namespace comp::game::tex_pack
 
 		~TextureFs();
 
-		// `data_dir` ends with a backslash; `archives` in load order.
-		void configure(std::string data_dir, std::vector<std::string> archives);
+		// `data_dir` ends with a backslash; `archives` highest priority first.
+		void configure(std::string data_dir, std::vector<std::string> archives, bool loose_first);
 
 		// `rel` is a normalised path: lower case, backslashes, starting with
 		// "textures\". Indexes the archives on first use.
 		Source locate(const std::string& rel);
 
-		// Reads (and inflates) the file. Loose files win over archives; among
-		// archives the last-loaded one wins.
+		// Reads (and inflates) the file. Among archives the first one in the
+		// list wins.
 		bool read(const std::string& rel, std::vector<uint8_t>& out, Source& src, std::string& err);
 
 		const Stats& stats() const { return stats_; }
@@ -58,6 +62,8 @@ namespace comp::game::tex_pack
 		const std::vector<std::string>& archive_report() const { return report_; }
 
 	private:
+		bool loose_first_ = true;
+
 		struct Archive
 		{
 			std::string name;

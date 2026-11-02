@@ -86,7 +86,12 @@ namespace comp::game::scene_statics
 		// frames without a base pass it could record keeps its seed record
 		// (its passes are skipped from then on).
 		constexpr uint8_t kConfirmFrames = 30;
-		constexpr uint32_t kPollPerTick = 256;     // claimed geometries whose chain is polled per tick
+		// Claimed geometries whose chain is polled per tick: enough for a full
+		// pass in kPollPassTicks, at least kPollPerTick, and past that minimum
+		// only while the tick's polling stays within kPollBudgetMs.
+		constexpr uint32_t kPollPerTick = 256;
+		constexpr uint32_t kPollPassTicks = 30;
+		constexpr double kPollBudgetMs = 0.75;
 		constexpr int kMaxChainHops = 64;
 		constexpr uint32_t kSwitchActive = 0xB0;   // NiSwitchNode: int, the active child's index
 		constexpr uint8_t kMaxAnchorTries = 3;
@@ -269,6 +274,7 @@ namespace comp::game::scene_statics
 			const char* list = nullptr;       // RtxConf: the rtx.conf list naming the albedo
 			uint32_t categories = 0;          // Live: the instance's categoryFlags
 			UINT last_seen = 0;
+			UINT last_on_screen = 0;          // the last frame a pass of it went to the screen
 			UINT not_before = 0;              // no record before this frame (deferred); soft refusals: retry at
 			float pose[sg::kPoseFloats] = {}; // last sampled (Live)
 			DrawRec draw;
@@ -391,7 +397,7 @@ namespace comp::game::scene_statics
 		std::vector<uintptr_t> g_queue;                       // recorded candidates to resolve
 		std::vector<uintptr_t> g_dirty;                       // claimed geometries whose pose changed
 		std::unordered_set<uintptr_t> g_movers;               // claimed geometries that moved since their claim (Rec::mover)
-		std::vector<uintptr_t> g_seen_hidden;                 // hidden claimed geometries the engine drew
+		std::vector<uintptr_t> g_seen_hidden;                 // hidden claimed geometries the engine drew to the screen
 		std::vector<uintptr_t> g_live_list;                   // round-robin order of the hide poll
 		bool g_live_list_dirty = true;
 		size_t g_poll_i = 0;
@@ -1037,6 +1043,8 @@ namespace comp::game::scene_statics
 			const bool first_today = r.last_seen != now;
 			const UINT since_seen = now - r.last_seen;
 			r.last_seen = now;
+			const bool first_on_screen = game::rendering_to_backbuffer && r.last_on_screen != now;
+			if (first_on_screen) r.last_on_screen = now;
 			if (r.state == State::Refused && soft_refusal(r.why) && now >= r.not_before)
 			{
 				// Its place may be known now: recorded and resolved again.
@@ -1070,9 +1078,11 @@ namespace comp::game::scene_statics
 						g_dirty.push_back(geo);
 					}
 				}
-				// Hidden, yet the engine renders it: it is in the world.
-				if (!r.visible) g_seen_hidden.push_back(geo);
 			}
+			// Hidden, yet the engine renders it to the screen: it is in the
+			// world. A shadow or reflection pass doesn't say so: its camera can
+			// pick another LOD child than the view does.
+			if (first_on_screen && !r.visible) g_seen_hidden.push_back(geo);
 			// A provisional claim's passes reach the renderer, which records
 			// its base pass (confirming or replacing the claim) and drops every
 			// draw of it this frame: its instance draws it.
@@ -2216,11 +2226,11 @@ namespace comp::game::scene_statics
 		void poll_hides()
 		{
 			const UINT now = frame();
-			// Drawn by the engine this frame: in the world, whatever else says.
+			// Drawn to the screen this frame: in the world, whatever else says.
 			for (const uintptr_t geo : g_seen_hidden)
 				if (const auto it = g_geos.find(geo); it != g_geos.end() && it->second.state == State::Live)
 				{
-					if (!it->second.visible && traced(it->second)) trace(geo, it->second, "shown: the engine rendered it this frame");
+					if (!it->second.visible && traced(it->second)) trace(geo, it->second, "shown: the engine rendered it to the screen this frame");
 					set_visible(it->second, true);
 				}
 			g_seen_hidden.clear();
@@ -2234,16 +2244,21 @@ namespace comp::game::scene_statics
 			}
 			if (g_live_list.empty()) return;
 			const sg::FaultSite site("hidePoll");
-			const size_t n =(std::min)(g_live_list.size(), static_cast<size_t>(kPollPerTick));
+			const size_t n = (std::min)(g_live_list.size(),
+				(std::max)(static_cast<size_t>(kPollPerTick), g_live_list.size() / kPollPassTicks));
+			const auto poll_start = std::chrono::steady_clock::now();
 			for (size_t k = 0; k < n; k++)
 			{
+				if (k >= kPollPerTick && (k & 31u) == 0 &&
+					std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - poll_start).count() > kPollBudgetMs)
+					break;
 				const uintptr_t geo = g_live_list[g_poll_i++ % g_live_list.size()];
 				const auto it = g_geos.find(geo);
 				if (it == g_geos.end() || it->second.state != State::Live) continue;
 				Rec& r = it->second;
-				// Drawn this frame: visible, but still gets the clamp-mode
-				// re-check.
-				const bool poll = r.last_seen != now;
+				// Drawn to the screen this frame: visible, but still gets the
+				// clamp-mode re-check.
+				const bool poll = r.last_on_screen != now;
 				if (!poll && r.draw.clamp_mode == kNoClampMode8 && !r.draw.diffuse_known) continue;
 				if (!sg::begin_resolve(geo)) continue;   // died: drained next tick
 				uint32_t clamp_now = material::kNoClampMode;
@@ -2616,6 +2631,27 @@ namespace comp::game::scene_statics
 			return SeedOutcome::Recorded;
 		}
 
+		// The engine's cull and registration leave this geometry out of its
+		// passes whatever the camera: no shader (0xB63F4D), or no world bound
+		// on it or on a node above it up to its reference's root. A leaf whose
+		// flags (bits 11, 12) bypass the frustum test skips its own bound test
+		// (0xA69640); a node always tests its own (0xA5DBE0).
+		bool engine_never_draws(uintptr_t geo, const sg::GeoRead& gr, uintptr_t root)
+		{
+			if (!gr.shader) return true;
+			uintptr_t node = geo;
+			for (int hop = 0; hop < kMaxChainHops && node; hop++)
+			{
+				uintptr_t parent = 0;
+				uint32_t flags = 0;
+				if (!sg::read_link(node, parent, flags)) return false;
+				if ((hop > 0 || !(flags & 0x1800u)) && !sg::has_world_bound(node)) return true;
+				if (node == root) break;
+				node = parent;
+			}
+			return false;
+		}
+
 		// One member: classified, placed, and recorded from the scene graph,
 		// then queued for this tick's resolve, or held back / refused / left
 		// to the engine's draws.
@@ -2683,7 +2719,7 @@ namespace comp::game::scene_statics
 			r.base_type = pl.o.base_type;
 			r.ref_id = pl.o.ref_id;
 			if (pl.switched_off || (pl.o.flags & (FNVR_OW_APP_CULLED | FNVR_OW_APP_CULLED_ABOVE | FNVR_OW_DISABLED |
-				FNVR_OW_DETACHED)))
+				FNVR_OW_DETACHED)) || engine_never_draws(geo, gr, pl.o.root))
 			{
 				hold_seed(geo, r, Seed::Hidden, kHoldHiddenFrames);
 				return SeedOutcome::Held;

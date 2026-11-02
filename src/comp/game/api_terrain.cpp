@@ -792,7 +792,11 @@ namespace comp::game::api_submit
 			uint32_t w = 0, h = 0, levels = 0;
 			std::vector<uint8_t> px;
 			const char* reject = nullptr;
-			if (!textures::read_bgra8(src, w, h, levels, px, reject) || !w || !h)
+			// A noise texture from a texture pack can be 4096 or larger, and its
+			// tint would not fit in the game's address space. The tint is a soft
+			// brightness variation, so a smaller mip looks the same.
+			constexpr uint32_t kMaxNoiseSize = 1024, kMaxTintSize = 2048;
+			if (!textures::read_bgra8(src, w, h, levels, px, reject, kMaxNoiseSize) || !w || !h)
 			{
 				if (!g_noise.failed)
 					shared::common::log("RemixApi", std::format("farlod: the LOD noise texture cannot be read ({}): no noise",
@@ -801,8 +805,8 @@ namespace comp::game::api_submit
 				return;
 			}
 			constexpr float kTiles = 1.75f;
-			const uint32_t ow = (std::max)(4u, static_cast<uint32_t>(std::lround(w * kTiles)));
-			const uint32_t oh = (std::max)(4u, static_cast<uint32_t>(std::lround(h * kTiles)));
+			const uint32_t ow = std::clamp(static_cast<uint32_t>(std::lround(w * kTiles)), 4u, kMaxTintSize);
+			const uint32_t oh = std::clamp(static_cast<uint32_t>(std::lround(h * kTiles)), 4u, kMaxTintSize);
 			// Top level: bilinear, wrapping, red channel (B8G8R8A8: byte 2).
 			std::vector<float> f(static_cast<size_t>(ow) * oh);
 			auto red = [&](uint32_t x, uint32_t y) { return px[(static_cast<size_t>(y % h) * w + x % w) * 4 + 2] / 255.0f; };
@@ -1622,7 +1626,7 @@ namespace comp::game::api_submit
 			const auto* ci = scene_graph::class_of(obj);
 			scene_graph::AvRead av;
 			const bool ok = scene_graph::read_av(obj, av);
-			const float* cam = camera_position_ptr;
+			const float* cam = camera_position();
 			std::string out = std::format("0x{:08X} {} '{}'", obj, ci ? ci->name : "?", object_name(obj));
 			if (ok)
 			{
@@ -1657,7 +1661,7 @@ namespace comp::game::api_submit
 		{
 			int lod_land = 0;
 			for (const auto& kv : g_traced) lod_land += kv.second.lod_land ? 1 : 0;
-			const float* cam = camera_position_ptr;
+			const float* cam = camera_position();
 			shared::common::log_event("LodTrace", std::format("{} land-LOD geometries drawn in {} frames ({} with "
 				"LOD_Landscape); camera ({:.0f}, {:.0f}, {:.0f})", g_traced.size(), kTraceFrames, lod_land,
 				cam ? cam[0] : 0.0f, cam ? cam[1] : 0.0f, cam ? cam[2] : 0.0f), shared::common::LOG_TYPE::LOG_TYPE_DEFAULT);

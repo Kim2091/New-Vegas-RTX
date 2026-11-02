@@ -130,7 +130,12 @@ namespace fnvr::lights
 						it->second.listed_scan = g_scan;
 						continue;
 					}
-					if (!(rtti::of(light) & rtti::kLight) || !pins::pin(light, pins::kTagEffect)) continue;
+					// The list can hold an NiDirectionalLight (0xB5C978); only point
+					// lights are sent.
+					uint32_t vtbl = 0;
+					if (!guard::get(light, vtbl) || vtbl != fnv_exe::addr().vtbl_ni_point_light ||
+						!pins::pin(light, pins::kTagEffect))
+						continue;
 					Light l;
 					l.light = light;
 					l.kind = FNVR_LK_EFFECT;

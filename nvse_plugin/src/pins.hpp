@@ -25,8 +25,8 @@ namespace fnvr::pins
 	// Main thread: records a reference taken by take_raw under `tag`.
 	void adopt(uintptr_t obj, uintptr_t tag);
 	// Main thread: takes and records a reference. False when the object is
-	// not a readable NiRefObject (vtable outside the image), or already
-	// pinned under that tag.
+	// not a readable NiRefObject (vtable outside the image), its count has
+	// reached zero, or it is already pinned under that tag.
 	bool pin(uintptr_t obj, uintptr_t tag);
 	// Main thread: schedules the release of one pin.
 	void release(uintptr_t obj, uintptr_t tag);

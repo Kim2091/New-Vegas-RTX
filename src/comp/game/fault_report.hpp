@@ -3,8 +3,9 @@
 // Problems that most likely come from another mod or a broken install. Each
 // kind is written once per session as a [Problem] line in remix-comp.log and
 // sent to the runtime's problem notice (rtx.faultNotice.hostReport, one
-// "id|text" line per kind), which shows it on top of the game with the log
-// and crash dump folders and the help link from rtx.conf.
+// "id|text|details" line per kind; the details are technical and the runtime
+// keeps them in a collapsed section), which shows it on top of the game with
+// the help link from rtx.conf.
 //
 // The code that detects a problem calls report() where it detects it.
 // on_present() checks the per-frame signals (an empty scene, the plugin's
@@ -17,7 +18,7 @@ namespace comp::game::fault_report
 	enum class Fault : uint8_t
 	{
 		XnvseMissing, NoLargeAddress, XnvseOld, PluginMissing, PluginMismatch, FeatureOff, UnknownExe, D3D9ExDevice,
-		IncompatibleDll, EmptyScene, PluginReadFaults, GameCrashed, Count
+		IncompatibleDll, DefaultPoolOff, EmptyScene, PluginReadFaults, GameCrashed, Count
 	};
 
 	// Logs the problem and sends it to the runtime. A kind already reported

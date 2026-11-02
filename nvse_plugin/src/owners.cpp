@@ -61,8 +61,7 @@ namespace fnvr::owners
 			uint32_t vtbl = 0, base = 0, cell = 0, id = 0;
 			uint8_t type = 0, base_type = 0;
 			if (!guard::plausible(ref) || !guard::get(ref, vtbl) || !guard::in_image(vtbl) ||
-				!guard::get(ref + engine::FORM_type, type) || type < engine::kFormType_REFR_first ||
-				type > engine::kFormType_REFR_last)
+				!guard::get(ref + engine::FORM_type, type) || !engine::is_reference_type(type))
 				return false;
 			guard::get(ref + engine::FORM_refID, id);
 			guard::get(ref + engine::REFR_parentCell, cell);
@@ -84,6 +83,17 @@ namespace fnvr::owners
 				!guard::get(rs + engine::RS_niNode, root))
 				return 0;
 			return guard::plausible(root) ? root : 0;
+		}
+
+		// Pins a root found by an unlocked read. The pin only holds when the
+		// reference still has that root afterwards: another thread can have
+		// swapped it, and the address can be another object by then.
+		bool pin_live_root(uintptr_t ref, uintptr_t root)
+		{
+			if (!pins::pin(root, ref)) return false;
+			if (live_root(ref) == root) return true;
+			pins::release(root, ref);
+			return false;
 		}
 
 		bool actor(const Owner& o)
@@ -112,16 +122,69 @@ namespace fnvr::owners
 			o.geos.clear();
 		}
 
+		// The first object under `root` that `match` accepts, depth first in
+		// child order, as the engine's own searches go. 0: none.
+		template <typename Match>
+		uintptr_t search(uintptr_t root, Match&& match)
+		{
+			static std::vector<uintptr_t> s_stack;
+			static uint32_t s_children[kMaxChildren];
+			s_stack.clear();
+			s_stack.push_back(root);
+			for (uint32_t nodes = 0; !s_stack.empty() && nodes < kMaxNodes; nodes++)
+			{
+				const uintptr_t n = s_stack.back();
+				s_stack.pop_back();
+				const uint32_t cls = rtti::of(n);
+				if (match(n, cls)) return n;
+				if (!(cls & rtti::kNode)) continue;
+				uint16_t count = 0;
+				uint32_t data = 0;
+				if (!guard::get(n + engine::NODE_childCount, count) || !guard::get(n + engine::NODE_childData, data) ||
+					!count || !data)
+					continue;
+				const uint32_t c = (std::min)(static_cast<uint32_t>(count), kMaxChildren);
+				if (!guard::read(data, s_children, c * sizeof(uint32_t))) continue;
+				for (uint32_t i = c; i-- > 0;)
+					if (guard::plausible(s_children[i])) s_stack.push_back(s_children[i]);
+			}
+			return 0;
+		}
+
+		// The light the engine registers for this reference (0x50D810), 0 if
+		// none: only a LIGH reference gets one, unless the LIGH is off by
+		// default. It is the first NiLight under the node named AttachLight,
+		// else under the root. The registration (0xB5C940) takes exact
+		// NiPointLight and NiDirectionalLight only, and the world list is sent
+		// as point lights, so anything but an NiPointLight gives none here.
+		uintptr_t registered_light(const Owner& o)
+		{
+			uint32_t flags = 0;
+			if (o.base_type != engine::kFormType_LIGH || !o.base || !guard::get(o.base + engine::LIGH_flags, flags) ||
+				(flags & engine::kLighFlag_OffByDefault))
+				return 0;
+			static constexpr char kAttachLight[] = "AttachLight";
+			const uintptr_t attach = search(o.root, [](uintptr_t n, uint32_t) {
+				uint32_t name = 0;
+				char text[sizeof(kAttachLight)] = {};
+				return guard::get(n + engine::NET_name, name) && guard::plausible(name) && guard::read(name, text, sizeof(text)) &&
+					std::memcmp(text, kAttachLight, sizeof(text)) == 0;
+			});
+			const uintptr_t from = attach && (rtti::of(attach) & rtti::kNode) ? attach : o.root;
+			const uintptr_t light = search(from, [](uintptr_t, uint32_t cls) { return (cls & rtti::kLight) != 0; });
+			uint32_t vtbl = 0;
+			return light && guard::get(light, vtbl) && vtbl == fnv_exe::addr().vtbl_ni_point_light ? light : 0;
+		}
+
 		// One walk of the reference's 3D: every geometry -> this reference,
-		// every light -> the light registry, the geometry -> the decal flag and
-		// the game-fog rule.
+		// the light the engine registers for it -> the light registry, the
+		// geometry -> the decal flag and the game-fog rule.
 		void walk(Owner& o)
 		{
 			forget_geos(o);
 			static std::vector<uintptr_t> s_stack, s_lights;
 			static uint32_t s_children[kMaxChildren];
 			s_stack.clear();
-			s_lights.clear();
 			s_stack.push_back(o.root);
 			uint32_t nodes = 0;
 			while (!s_stack.empty())
@@ -141,11 +204,6 @@ namespace fnvr::owners
 					g_geo_owner[n] = o.ref;
 					continue;
 				}
-				if (cls & rtti::kLight)
-				{
-					s_lights.push_back(n);
-					continue;
-				}
 				if (!(cls & rtti::kNode)) continue;
 				uint16_t count = 0;
 				uint32_t data = 0;
@@ -160,6 +218,8 @@ namespace fnvr::owners
 			}
 			g_walks++;
 			g_nodes += nodes;
+			s_lights.clear();
+			if (const uintptr_t light = registered_light(o)) s_lights.push_back(light);
 			lights::set_placed(o.ref, s_lights);
 			decals::on_walk(o.ref, o.base_type, o.base, o.geos);
 			fog::on_walk(o.ref, o.ref_type, o.base_type, o.base, o.geos);
@@ -222,6 +282,28 @@ namespace fnvr::owners
 			}
 			return o.resolved_cell;
 		}
+
+		// The reference may have moved to another cell, keeping its 3D.
+		void refresh_cell(Owner& o)
+		{
+			uint32_t cell = 0;
+			if (!guard::get(o.ref + engine::REFR_parentCell, cell)) return;
+			o.cell = cell;
+			o.resolved_serial = 0xFFFFFFFFu;
+		}
+
+		// The chain above `node` reaches an attached cell's root.
+		bool under_attached_cell(uintptr_t node)
+		{
+			for (int hop = 0; hop < kMaxChainHops && node; hop++)
+			{
+				if (cells::cell_of_root(node)) return true;
+				uint32_t parent = 0;
+				if (!guard::get(node + engine::AV_parent, parent)) return false;
+				node = parent;
+			}
+			return false;
+		}
 	}
 
 	void on_set3d(uintptr_t ref, uintptr_t root)
@@ -277,6 +359,7 @@ namespace fnvr::owners
 			}
 			else
 			{
+				refresh_cell(it->second);
 				walk(it->second);
 				return;
 			}
@@ -288,7 +371,7 @@ namespace fnvr::owners
 			return;
 		}
 		const uintptr_t root = live_root(ref);
-		if (!root || !pins::pin(root, ref)) return;
+		if (!root || !pin_live_root(ref, root)) return;
 		o.root = root;
 		auto& slot = g_owners[ref];
 		slot = std::move(o);
@@ -310,7 +393,7 @@ namespace fnvr::owners
 			{
 				Owner o;
 				const uintptr_t root = live_root(ref);
-				if (root && read_ref(ref, o) && pins::pin(root, ref))
+				if (root && read_ref(ref, o) && pin_live_root(ref, root))
 				{
 					o.root = root;
 					auto& slot = g_owners[ref];
@@ -338,8 +421,17 @@ namespace fnvr::owners
 	{
 		static std::vector<uintptr_t> s_refs;
 		s_refs.clear();
-		for (const auto& [ref, o] : g_owners)
-			if (o.cell == cell || o.resolved_cell == cell) s_refs.push_back(ref);
+		// A reference that moved keeps its owner while its 3D is in an attached cell.
+		for (auto& [ref, o] : g_owners)
+		{
+			if (o.cell != cell && o.resolved_cell != cell) continue;
+			if (live_root(ref) == o.root)
+			{
+				refresh_cell(o);
+				if (resolve_cell(o)) continue;
+			}
+			s_refs.push_back(ref);
+		}
 		for (const uintptr_t ref : s_refs) drop(ref, false);
 		g_detach_drops += static_cast<uint32_t>(s_refs.size());
 	}
@@ -408,6 +500,15 @@ namespace fnvr::owners
 			if (flags & 1u) (reached ? culled_above : culled) = true;
 			if (node == o.root) reached = true;
 			node = parent;
+		}
+		// In an attached cell without passing the root: the address belongs to
+		// another geometry now, as only the root is pinned. A child taken off
+		// for a moment has no such chain and stays this reference's.
+		if (!reached && under_attached_cell(geo))
+		{
+			o.geos.erase(std::remove(o.geos.begin(), o.geos.end(), geo), o.geos.end());
+			g_geo_owner.erase(git);
+			return false;
 		}
 		out = {};
 		out.ref = o.ref;

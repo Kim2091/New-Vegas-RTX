@@ -53,6 +53,26 @@ namespace fnvr::pins
 			g_released++;
 			if (before == 1) g_deleted_by_us++;
 		}
+
+		// One more reference, unless the count has reached zero: at zero the
+		// object is being deleted, and a new reference would delete it twice.
+		bool add_ref_if_alive(uintptr_t obj)
+		{
+			auto* count = reinterpret_cast<volatile LONG*>(obj + REF_count);
+			__try
+			{
+				for (;;)
+				{
+					const LONG n = *count;
+					if (n <= 0) return false;
+					if (InterlockedCompareExchange(count, n + 1, n) == n) return true;
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
 	}
 
 	void take_raw(uintptr_t obj)
@@ -72,8 +92,7 @@ namespace fnvr::pins
 
 	bool pin(uintptr_t obj, uintptr_t tag)
 	{
-		if (!vtable_ok(obj) || g_pins.count(key(obj, tag))) return false;
-		InterlockedIncrement(reinterpret_cast<volatile LONG*>(obj + REF_count));
+		if (!vtable_ok(obj) || g_pins.count(key(obj, tag)) || !add_ref_if_alive(obj)) return false;
 		g_pins.emplace(key(obj, tag), Pin{ obj, tag });
 		return true;
 	}

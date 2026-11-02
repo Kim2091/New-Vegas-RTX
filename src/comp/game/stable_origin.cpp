@@ -260,7 +260,7 @@ namespace comp::game::stable_origin
 		// origin.
 		void update_camera()
 		{
-			const float* cp = game::camera_position_ptr;
+			const float* cp = game::camera_position();
 			if (!nvse_link::has(FNVR_F_CAMERA) || !finite3(cp))
 			{
 				g_active = false;
@@ -341,7 +341,7 @@ namespace comp::game::stable_origin
 	{
 		begin_frame(dev);
 		if (!active() || g_menu_camera) return;
-		const float* cp = game::camera_position_ptr;
+		const float* cp = game::camera_position();
 		if (!finite3(cp)) return;
 		bool same = true;
 		for (int i = 0; i < 3; i++) same = same && static_cast<double>(cp[i]) == g_cam[i];
@@ -422,7 +422,7 @@ namespace comp::game::stable_origin
 	bool camera_matches_now()
 	{
 		if (!active()) return false;
-		const float* cp = game::camera_position_ptr;
+		const float* cp = game::camera_position();
 		if (!cp) return false;
 		constexpr double kTolerance = 0.01;
 		bool match = true;

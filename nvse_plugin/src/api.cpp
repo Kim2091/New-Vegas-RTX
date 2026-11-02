@@ -51,6 +51,8 @@ namespace fnvr::api
 			if (!out) return;
 			*out = {};
 			if (!main_thread_or_log("facts")) return;
+			static uint32_t s_seen = 0;
+			guard::new_frame_once(s_seen);
 			monitor::apply_queue();
 			const menu::State m = menu::poll();
 			const camera::View v = camera::read_world_camera(true);

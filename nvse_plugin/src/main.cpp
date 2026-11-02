@@ -125,7 +125,10 @@ namespace fnvr::monitor
 					g_main_thread = GetCurrentThreadId();
 				}
 				g_frame++;
-				guard::new_frame();
+				{
+					static uint32_t s_seen = 0;
+					guard::new_frame_once(s_seen);
+				}
 				apply_queue();
 				camera::tick();
 				cells::tick(g_frame);
@@ -189,10 +192,15 @@ namespace fnvr::monitor
 			case kMsg_NewGame:
 			case kMsg_ExitToMainMenu:
 			case kMsg_OnFramePresent:
-				if (msg->type == kMsg_OnFramePresent) r.a = (data && msg->dataLen >= 4) ? *static_cast<const int*>(msg->data) : 0;
+				if (msg->type == kMsg_OnFramePresent)
+				{
+					r.a = (data && msg->dataLen >= 4) ? *static_cast<const int*>(msg->data) : 0;
+					if (r.a && !camera::load_on()) return;
+				}
 				else if (msg->type == kMsg_PostLoadGame) r.a = data & 0xFF;
 				if (on_main_thread())
 				{
+					if (msg->type == kMsg_OnFramePresent && !r.a) guard::new_frame();
 					apply_queue();
 					apply(r);
 				}

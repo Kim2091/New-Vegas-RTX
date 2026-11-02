@@ -23,6 +23,9 @@ namespace fnvr::engine
 	constexpr uint32_t FORM_flags = 0x08;                  // 0x20 deleted, 0x800 disabled
 	constexpr uint32_t FORM_refID = 0x0C;
 	constexpr uint8_t kFormType_CELL = 0x39;
+	constexpr uint32_t CELL_flags = 0x24;                  // u8
+	constexpr uint8_t kCellFlag_Interior = 1;              // the engine's own test (0x425FD0)
+	constexpr uint8_t kCellFlag_HasWater = 2;
 	constexpr uint32_t CELL_state = 0x26;                  // u8, nvse_abi::CellState
 	constexpr uint32_t CELL_coords = 0x48;                 // exterior: {i32 x, i32 y}*
 	// The cell's references: a list whose head node is in the cell,
@@ -33,7 +36,7 @@ namespace fnvr::engine
 	constexpr uint32_t CELL_objectList = 0xAC;
 	constexpr uint32_t CELL_criticalQueued = 0xA0;         // u32, references still queued for load
 	constexpr uint32_t CELL_queued = 0xA4;                 // u32
-	constexpr uint32_t CELL_worldSpace = 0xC0;             // TESWorldSpace*, null for an interior
+	constexpr uint32_t CELL_worldSpace = 0xC0;             // exterior: TESWorldSpace*. Interior: can hold another value (0x54DE80)
 	constexpr uint32_t CELL_renderData = 0xC4;             // render data, whose first field is the cell's root NiNode
 	// TESObjectCELL and TESWorldSpace: TESFullName at 0x18, its String {char*, u16 length, u16 capacity} at 0x1C.
 	constexpr uint32_t FULLNAME_text = 0x1C;
@@ -51,11 +54,15 @@ namespace fnvr::engine
 	constexpr uint32_t IM_pipBoyState = 0x4BC;             // u32, 0-5 state machine (0x70EE80)
 
 	// ---- TESObjectREFR ----
-	constexpr uint8_t kFormType_REFR_first = 0x3A;         // REFR; ACHR 0x3B, ACRE 0x3C, the projectile refs after
 	constexpr uint8_t kFormType_REFR = 0x3A;
-	constexpr uint8_t kFormType_REFR_last = 0x45;
 	constexpr uint8_t kFormType_ACHR = 0x3B;
 	constexpr uint8_t kFormType_ACRE = 0x3C;
+	constexpr uint8_t kFormType_REFR_last = 0x40;          // the projectile references end here
+	constexpr uint8_t kFormType_ContinuousBeam = 0x69;
+	constexpr bool is_reference_type(uint8_t type)
+	{
+		return (type >= kFormType_REFR && type <= kFormType_REFR_last) || type == kFormType_ContinuousBeam;
+	}
 	constexpr uint32_t kFormFlag_Deleted = 0x20;
 	constexpr uint32_t kFormFlag_Disabled = 0x800;
 	constexpr uint32_t REFR_baseForm = 0x20;
@@ -77,6 +84,11 @@ namespace fnvr::engine
 	constexpr uint32_t LIST_next = 0x00;                   // NiTListItem {next, prev, data}
 	constexpr uint32_t LIST_data = 0x08;
 	constexpr uint32_t SSL_light = 0xF8;                   // ShadowSceneLight -> NiLight*
+
+	// ---- TESObjectLIGH ----
+	constexpr uint8_t kFormType_LIGH = 0x1E;
+	constexpr uint32_t LIGH_flags = 0xA8;
+	constexpr uint32_t kLighFlag_OffByDefault = 0x20;      // a plain reference gets no light (0x50D8FE)
 
 	// ---- NiLight ----
 	constexpr uint32_t LIGHT_dimmer = 0xC4;
@@ -117,6 +129,7 @@ namespace fnvr::engine
 	constexpr uint32_t MODEL_path = 0x04;                  // TESModel: the path char*
 
 	// ---- NiObjectNET / NiTimeController (Gamebryo 2.x) ----
+	constexpr uint32_t NET_name = 0x08;                    // const char*
 	constexpr uint32_t NET_controller = 0x0C;              // NiTimeController*: the first of the object's controllers
 	constexpr uint32_t CTRL_target = 0x2C;                 // NiObjectNET*: the object it drives (checked against the owner)
 	constexpr uint32_t CTRL_next = 0x30;                   // NiTimeController*: the next controller of the same object

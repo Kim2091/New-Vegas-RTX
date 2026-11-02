@@ -8,6 +8,7 @@
 #include "vs_expand.hpp"
 #include "tex_pack.hpp"
 #include "tex_pool.hpp"
+#include "game_ini.hpp"
 #include "ui_boundary.hpp"
 #include "menu_bg.hpp"
 #include "ps_protocol.hpp"
@@ -301,12 +302,18 @@ namespace comp::game
 			&& draw_writes_depth(dev) && !draw_uses_viewmodel_projection();
 	}
 
+	static UINT g_world_draw_frame = 0xFFFFFFFFu;
+
+	bool world_draw_seen_this_frame()
+	{
+		return g_world_draw_frame == shared::common::ffp_state::get().frame_count();
+	}
+
 	void on_world_draw(IDirect3DDevice9* dev, bool claimed_static)
 	{
-		static UINT s_frame = 0xFFFFFFFFu;
 		auto& ffp = shared::common::ffp_state::get();
 		const UINT fc = ffp.frame_count();
-		if (s_frame == fc) return;
+		if (g_world_draw_frame == fc) return;
 		// The renderer's world draw gates.
 		if (!ffp.is_enabled() || !ffp.view_proj_valid() || !rendering_to_backbuffer || is_2d() ||
 			(!claimed_static && is_sky())) return;
@@ -314,7 +321,7 @@ namespace comp::game
 		const float* proj = get_renderer_matrix(RENDERER_PROJ_OFF);
 		// A left-handed perspective projection (w = view z), nothing else.
 		if (!view || !proj || proj[11] != 1.0f || proj[15] != 0.0f || !(proj[0] > 1e-4f)) return;
-		s_frame = fc;
+		g_world_draw_frame = fc;
 		// This frame's camera: D re-taken if the global moved since
 		// BeginScene, before the Remix camera, the lights and the API draws.
 		stable_origin::at_first_world_draw(dev);
@@ -630,7 +637,7 @@ namespace comp::game
 			return;
 		}
 		if (lights_updated_frame) return;
-		if (!camera_position_ptr) return;
+		if (!camera_position()) return;
 		lights_updated_frame = true;
 
 		if (!nvse_link::has(FNVR_F_LIGHTS))
@@ -671,7 +678,7 @@ namespace comp::game
 
 		int i = 0;
 		auto emit = [&](const FnvRemixLight& l, bool player_light) {
-			const float* cam = camera_position_ptr;
+			const float* cam = camera_position();
 			const float gain = l.dimmer * strength * (player_light ? pipboy_light_intensity : 1.0f);
 			D3DLIGHT9 light = {};
 			light.Type = D3DLIGHT_POINT;
@@ -798,9 +805,9 @@ namespace comp::game
 			dev->GetLight(0, &sent);
 			const double* d = stable_origin::shift();
 			const double s = stable_origin::scale();
-			const float wx = static_cast<float>(sent.Position.x / s - d[0] + camera_position_ptr[0]);
-			const float wy = static_cast<float>(sent.Position.y / s - d[1] + camera_position_ptr[1]);
-			const float wz = static_cast<float>(sent.Position.z / s - d[2] + camera_position_ptr[2]);
+			const float wx = static_cast<float>(sent.Position.x / s - d[0] + camera_position()[0]);
+			const float wy = static_cast<float>(sent.Position.y / s - d[1] + camera_position()[1]);
+			const float wz = static_cast<float>(sent.Position.z / s - d[2] + camera_position()[2]);
 			static uintptr_t s_id = 0;
 			static bool s_tp = false, s_away = false;
 			static UINT s_frame = 0;
@@ -819,7 +826,7 @@ namespace comp::game
 					"({:.3f}, {:.3f}, {:.4f})", g_player_third_person ? "third" : "first", sent.Position.x, sent.Position.y,
 					sent.Position.z, wx, wy, wz, player->pos[0], player->pos[1], player->pos[2],
 					away ? std::format(" -- {:.0f} units from the player, placed at the player", far_by) : std::string(),
-					camera_position_ptr[0], camera_position_ptr[1], camera_position_ptr[2], pp[0], pp[1], pp[2],
+					camera_position()[0], camera_position()[1], camera_position()[2], pp[0], pp[1], pp[2],
 					g_world_fwd[0], g_world_fwd[1], g_world_fwd[2], sent.Diffuse.r, sent.Diffuse.g, sent.Diffuse.b, sent.Range,
 					sent.Attenuation0, sent.Attenuation1, sent.Attenuation2), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
 			}
@@ -842,8 +849,8 @@ namespace comp::game
 			s_order.push_back(&l);
 		}
 		auto dist2 = [&](const FnvRemixLight* l) {
-			const float dx = l->pos[0] - camera_position_ptr[0], dy = l->pos[1] - camera_position_ptr[1],
-				dz = l->pos[2] - camera_position_ptr[2];
+			const float dx = l->pos[0] - camera_position()[0], dy = l->pos[1] - camera_position()[1],
+				dz = l->pos[2] - camera_position()[2];
 			return dx * dx + dy * dy + dz * dz;
 		};
 		std::stable_sort(s_order.begin(), s_order.end(),
@@ -1142,7 +1149,7 @@ namespace comp::game
 
 		const auto& addr = fnv_exe::addr();
 		renderer_singleton_ptr = addr.renderer ? reinterpret_cast<void**>(addr.renderer) : nullptr;
-		camera_position_ptr = addr.camera_position ? reinterpret_cast<float*>(addr.camera_position) : nullptr;
+		camera_position_raw = addr.camera_position ? reinterpret_cast<float*>(addr.camera_position) : nullptr;
 
 		const auto& l = shared::common::config::get().lights;
 		lights_enabled = l.enabled;
@@ -1190,6 +1197,9 @@ namespace comp::game
 
 		// FaceGen face maps stay readable under NVTF's DEFAULT pool (tex_pool.cpp)
 		tex_pool::install_hook();
+
+		// The mod's game settings stay out of the player's INI files (game_ini.cpp)
+		game_ini::install_hook();
 
 		// The frame's UI boundary: Main_Render's call to the HUD's 3D render (ui_boundary.cpp)
 		ui_boundary::install();

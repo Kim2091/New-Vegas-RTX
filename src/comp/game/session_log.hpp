@@ -12,9 +12,9 @@
 //     and the warnings, errors and held-back lines since the previous status
 //     line;
 //   - with it one [Memory] line: the address space by region type (images,
-//     mapped views, private memory), the bridge client's CPU copies of
-//     textures and buffers, and how the D3DPOOL_DEFAULT textures were handled
-//     (tex_pool.hpp);
+//     mapped views, private memory), private memory by allocation size and
+//     its largest allocations, the bridge client's CPU copies of textures and
+//     buffers, and how the D3DPOOL_DEFAULT textures were handled (tex_pool.hpp);
 //   - every 30 s of in-game frames one [Perf] line: a verdict (the game
 //     thread or the renderer holds the frame rate), frame time percentiles,
 //     the game thread's frame split into engine, wrapper draws, wrapper end of

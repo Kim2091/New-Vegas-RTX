@@ -93,11 +93,12 @@ namespace comp
 					Sleep(1u); T += 1u;
 				}
 
-				if (T >= 30000)
+				// Another mod's startup dialog can hold the game for as long as the player
+				// leaves it open, so the wait has no limit.
+				if (T == 30000)
 				{
-					Beep(300, 100); Sleep(100); Beep(200, 100);
-					shared::common::log("Main", "Could not find '" WINDOW_CLASS_NAME "' Window. Not loading RTX Compatibility Mod.", shared::common::LOG_TYPE::LOG_TYPE_ERROR, true);
-					return TRUE;
+					T++;
+					shared::common::log("Main", "Still waiting for the '" WINDOW_CLASS_NAME "' window. A startup dialog may be open.", shared::common::LOG_TYPE::LOG_TYPE_WARN, false);
 				}
 			}
 		}

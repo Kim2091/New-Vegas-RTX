@@ -5,9 +5,10 @@
 // The light registry. Every light it lists is pinned, so its NiLight can't be
 // freed and reused for another light while listed (heap replacers recycle a
 // freed light's memory at once):
-//   placed  lights found in a reference's 3D (the owners walk), owned by that
-//           reference until it lets go of its 3D;
-//   effect  lights in the ShadowSceneNode's active lists (+0xB4 point,
+//   placed  the light the engine registers for a LIGH reference, found in its
+//           3D (the owners walk), owned by that reference until it lets go of
+//           its 3D;
+//   effect  point lights in the ShadowSceneNode's active lists (+0xB4 point,
 //           +0xC0 shadow-casting) that no reference owns, released at the
 //           main loop once only the plugin's pin holds them (the engine let go);
 //   player  the player's LightEffect light (the Pip-Boy light), replaced
@@ -21,7 +22,7 @@
 
 namespace fnvr::lights
 {
-	// The owners walk found these lights under `ref`'s 3D (all of them).
+	// The owners walk found these lights under `ref`'s 3D (all it registers).
 	void set_placed(uintptr_t ref, const std::vector<uintptr_t>& found);
 	void on_owner_dropped(uintptr_t ref);
 	// Every light dropped (loads, new game, main menu), before pins::release_all.

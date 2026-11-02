@@ -18,9 +18,10 @@
 // route, sets no frame camera (stable origin, world FOV, lights, the Remix
 // fallback camera) and is never suppressed as a claimed static.
 //
-// A frame over the engine's frozen menu background (menu_bg::frozen_menu),
-// and any frame that draws a menu scene, is rasterised as the game draws it,
-// with no path tracing. The runtime commits every draw made before its RTX injection
+// A frame over the engine's frozen menu background (menu_bg::frozen_menu), any
+// frame that draws a menu scene, and a frame that draws only the interface
+// (ui_boundary::no_world_ui_draw) is rasterised as the game draws it, with no
+// path tracing. The runtime commits every draw made before its RTX injection
 // (vertex capture keeps the raster too) and takes the Main camera from any of
 // them with a perspective projection (for these shader draws, the device's
 // last FFP transforms). The injection, at the first UI draw (the menu's 2D

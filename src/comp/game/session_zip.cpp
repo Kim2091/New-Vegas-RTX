@@ -598,7 +598,7 @@ namespace comp::game::session_zip
 	void prune(const std::wstring& archive_dir, int keep)
 	{
 		std::vector<std::pair<uint64_t, std::wstring>> zips;
-		each_file(archive_dir, L"NewVegasRTX-*.zip", [&](const std::wstring& name, uint64_t t) { zips.emplace_back(t, name); });
+		each_file(archive_dir, L"NewVegasRTX-*.zip", [&](const std::wstring& name, uint64_t t) { zips.emplace_back(zip_time(name, t), name); });
 		std::sort(zips.begin(), zips.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 		for (size_t i = static_cast<size_t>(keep); i < zips.size(); i++) DeleteFileW((archive_dir + zips[i].second).c_str());
 		// A zip left half-written by a crash during archiving. One being
@@ -687,6 +687,42 @@ namespace comp::game::session_zip
 	bool is_snapshot(const std::wstring& name)
 	{
 		return lower(name).find(L"-snapshot-") != std::wstring::npos;
+	}
+
+	uint64_t zip_time(const std::wstring& name, uint64_t modified)
+	{
+		// YYYY-MM-DD_HH-MM-SS is 19 characters.
+		auto digits = [&](size_t at, size_t count)
+		{
+			for (size_t i = at; i < at + count; i++)
+				if (name[i] < L'0' || name[i] > L'9') return false;
+			return true;
+		};
+		auto number = [&](size_t at, size_t count)
+		{
+			WORD v = 0;
+			for (size_t i = at; i < at + count; i++) v = static_cast<WORD>(v * 10 + (name[i] - L'0'));
+			return v;
+		};
+		for (size_t at = name.size() < 19 ? 0 : name.size() - 19 + 1; at-- > 0;)
+		{
+			if (at + 19 > name.size()) continue;
+			if (!digits(at, 4) || name[at + 4] != L'-' || !digits(at + 5, 2) || name[at + 7] != L'-' || !digits(at + 8, 2) ||
+				name[at + 10] != L'_' || !digits(at + 11, 2) || name[at + 13] != L'-' || !digits(at + 14, 2) ||
+				name[at + 16] != L'-' || !digits(at + 17, 2))
+				continue;
+			SYSTEMTIME local = {}, utc = {};
+			local.wYear = number(at, 4);
+			local.wMonth = number(at + 5, 2);
+			local.wDay = number(at + 8, 2);
+			local.wHour = number(at + 11, 2);
+			local.wMinute = number(at + 14, 2);
+			local.wSecond = number(at + 17, 2);
+			FILETIME ft;
+			if (TzSpecificLocalTimeToSystemTime(nullptr, &local, &utc) && SystemTimeToFileTime(&utc, &ft)) return ft64(ft);
+			break;
+		}
+		return modified;
 	}
 
 	// ---- Who zips ----

@@ -3,6 +3,8 @@
 #include "call_chain.hpp"
 #include "game.hpp"
 #include "menu_scene.hpp"
+#include "nvse_link.hpp"
+#include "scene_graph.hpp"
 #include "shared/fnv_exe.hpp"
 #include "shared/common/ffp_state.hpp"
 
@@ -13,6 +15,10 @@ namespace comp::game::ui_boundary
 	namespace
 	{
 		constexpr UINT kLogWindow = 600;
+
+		// The engine's pass enum (engine_class.cpp).
+		constexpr uint16_t kPassBloodSplatterFirst = 0x2F0, kPassBloodSplatterLast = 0x2F1;
+		constexpr uint16_t kPassTile = 0x2F5;
 
 		// Written by the code caves on the game's main thread, which also
 		// makes the D3D9 calls; cleared at Present. g_passed: the HUD's 3D render
@@ -123,7 +129,21 @@ namespace comp::game::ui_boundary
 
 	bool in_ui()
 	{
-		return g_passed != 0 && g_world != 0;
+		if (g_world == 0) return false;
+		if (g_passed != 0) return true;
+		const uint16_t pass = scene_graph::current_pass_type();
+		return pass >= kPassBloodSplatterFirst && pass <= kPassBloodSplatterLast;
+	}
+
+	bool no_world_ui_draw()
+	{
+		if (!g_installed || g_world != 0 || game::world_draw_seen_this_frame()) return false;
+		const uint16_t pass = scene_graph::current_pass_type();
+		if (pass == kPassTile) return true;
+		// Another thread can draw the loading screen, and the dispatcher hook
+		// records only the render thread's passes.
+		return pass == scene_graph::kNoPassType && nvse_link::linked() &&
+			nvse_link::facts().game_state == FNVR_GS_LOADING && game::is_2d();
 	}
 
 	bool injected()

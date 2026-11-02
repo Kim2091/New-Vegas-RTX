@@ -131,6 +131,12 @@ namespace comp::game::session_zip
 	// A snapshot zip ("Save Report Now"), not the end-of-session one.
 	bool is_snapshot(const std::wstring& name);
 
+	// When a zip's session started (or, for a snapshot, when it was saved), read
+	// from the last local date and time in its file name, as a UTC file time. A
+	// file's own modified time changes when a mod manager copies the file, so
+	// it is used only for a name without a date.
+	uint64_t zip_time(const std::wstring& name, uint64_t modified);
+
 	// A process exit code that is an NTSTATUS error: the process ended on an
 	// exception (a fail-fast included), not by an exit call.
 	bool is_exception_exit(int64_t code);

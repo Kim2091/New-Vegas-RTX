@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "scene_graph.hpp"
 #include "call_chain.hpp"
+#include "game.hpp"
 
 #include <atomic>
 
@@ -323,7 +324,9 @@ namespace comp::game::scene_graph
 			// The engine is rendering it, so it is alive for this call: the
 			// filter may read it (its sighting comes before its verdict).
 			const uintptr_t geo = pass ? *reinterpret_cast<const uintptr_t*>(pass) : 0;
-			if (geo && g_filter && g_filter(geo))
+			// A small off-screen target (the local map, a minimap) keeps its
+			// geometry: the API paths never draw into it.
+			if (geo && g_filter && g_filter(geo) && (game::rendering_to_backbuffer || game::offscreen_screen_sized))
 			{
 				g_skipped++;
 				return;
@@ -516,6 +519,13 @@ namespace comp::game::scene_graph
 	bool read_u16(uintptr_t addr, uint16_t& out) { return addr >= 0x10000 && guarded_copy(addr, &out, 2); }
 	bool read_u32(uintptr_t addr, uint32_t& out) { return read_block(addr, &out, 4); }
 	bool read_f32(uintptr_t addr, float& out) { return read_block(addr, &out, 4); }
+
+	bool has_world_bound(uintptr_t obj)
+	{
+		uint32_t bound = 0;
+		float radius = 0.0f;
+		return read_u32(obj + fnv::AV_worldBound, bound) && bound && read_f32(bound + fnv::BOUND_radius, radius) && radius != 0.0f;
+	}
 
 	bool read_av(uintptr_t obj, AvRead& out)
 	{

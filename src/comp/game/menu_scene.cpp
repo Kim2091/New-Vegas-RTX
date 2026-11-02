@@ -130,7 +130,7 @@ namespace comp::game::menu_scene
 		const UINT now = shared::common::ffp_state::get().frame_count();
 		if (g_raster_frame == now || !dev) return;
 		if (!pipboy_closed()) return;
-		if (!menu_draw && !menu_bg::frozen_menu()) return;
+		if (!menu_draw && !menu_bg::frozen_menu() && !ui_boundary::no_world_ui_draw()) return;
 		// The runtime only injects at a draw to a primary-sized target.
 		if (!game::rendering_to_backbuffer) return;
 		if (!ui_boundary::trigger_injection(dev))

@@ -99,10 +99,12 @@ namespace comp::game::api::textures
 
 	// Every level of a MANAGED / SYSTEMMEM 2D texture as tightly-packed
 	// B8G8R8A8 texels, largest first (DXT1-5 decoded, the other formats
-	// acquire takes expanded), from the bridge client's CPU shadow. False,
-	// with `reject`, when it can't be read.
+	// acquire takes expanded), from the bridge client's CPU shadow. With
+	// `max_size`, starts at the first level no larger than that, and width,
+	// height and levels describe what was read. False, with `reject`, when it
+	// can't be read.
 	bool read_bgra8(IDirect3DBaseTexture9* tex, uint32_t& width, uint32_t& height, uint32_t& levels,
-		std::vector<uint8_t>& out, const char*& reject);
+		std::vector<uint8_t>& out, const char*& reject, uint32_t max_size = 0);
 
 	// The bridge client forwards remixapi_TextureInfoHostImportEXT (checked
 	// once, by its log text in the client image), so float textures can be

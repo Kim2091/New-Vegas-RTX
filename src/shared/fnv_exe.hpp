@@ -59,6 +59,7 @@ namespace fnv_exe
 		Code vats_limb_visibility;     // VATSEffect's per-limb visibility from its occlusion queries: thiscall(this, int limb, float* out), ret 8 (detour)
 		Code save_screenshot_call;     // the save header writer 0x84D4B0's call to the save screenshot capture 0x878F60: NiPixelData* cdecl(int* w, int* h, const char* bmp)
 		Code screenshot_key_call;      // Main_OnIdle's call to the Print Screen capture 0x878860 (ScreenShotN.bmp from the back buffer): cdecl(int)
+		Code settings_write;          // SettingCollection: thiscall(this, const char* path) writes its values to an INI file (detour)
 
 		// ---- Engine functions ----
 		uintptr_t dec_ref_count;       // NiRefObject::DecRefCount
@@ -78,6 +79,8 @@ namespace fnv_exe
 		Code xnvse_main_present;       // main present (OnFramePresent 0)
 		Code xnvse_loading_present;    // loading present (OnFramePresent 1)
 		Code xnvse_main_loop;          // main loop (MainGameLoop)
+		Code xnvse_form_load;          // non-persistent form load (OnNonPersistentFormLoad)
+		Code xnvse_form_unload;        // non-persistent form unload (OnNonPersistentFormUnload)
 
 		// ---- The decal path ----
 		Code decal_pass_builder;
@@ -102,7 +105,7 @@ namespace fnv_exe
 		uintptr_t player;              // PlayerCharacter*
 		uintptr_t shadow_scene_node;   // ShadowSceneNode*
 		uintptr_t renderer;            // NiDX9Renderer*
-		uintptr_t camera_position;     // NiPoint3, the renderer's camera position
+		uintptr_t camera_position;     // NiPoint3, SpeedTree's camera (see game::camera_position)
 		uintptr_t climate_hours;       // float[4], the climate's sunrise / sunset begin / end hours
 		uintptr_t sun_alpha_trans_time;// float, fSunAlphaTransTime's value
 		uintptr_t menu_capture_request;// u8, the Pip-Boy capture request
@@ -112,7 +115,7 @@ namespace fnv_exe
 		uintptr_t water_in_placeable;  // u8, the camera is inside placeable water
 		uintptr_t water_placeable_height; // float, that placeable water's surface Z
 		uintptr_t water_system_on;     // u8, ToggleWaterSystem
-		uintptr_t water_setting;       // u8, the water setting is on
+		uintptr_t water_setting;       // Setting "bUseWater:Water"
 		uintptr_t render_camera;       // NiCamera*, the camera of the scene being drawn (BSShader DrawScene)
 		uintptr_t hud_3d_node;         // NiNode*, HUDMainMenu's 3D element (drawn every frame under the menu object scene node)
 		uintptr_t interface_lock;      // CRITICAL_SECTION, the interface's lock (tiles, menus)
@@ -171,6 +174,7 @@ namespace fnv_exe
 		{ 0x00800A00, 6,  { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C } },
 		{ 0x0084D6B2, 5,  { 0xE8, 0xA9, 0xB8, 0x02, 0x00 } },
 		{ 0x00870545, 5,  { 0xE8, 0x16, 0x83, 0x00, 0x00 } },
+		{ 0x005E01B0, 6,  { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 } },
 		// Engine functions
 		0x00401970, 0x0088C240, 0x008854D0, 0x00888960, 0x00C66230, 0x00AA13E0, 0x00A7C190,
 		// xNVSE event hook sites
@@ -182,6 +186,8 @@ namespace fnv_exe
 		{ 0x0087055E, 5, { 0xE8, 0xCD, 0xB1, 0x2F, 0x00 } },
 		{ 0x007147C4, 5, { 0xE8, 0x67, 0x6F, 0x45, 0x00 } },
 		{ 0x0086B386, 5, { 0xE8, 0x25, 0x11, 0xBD, 0xFF } },
+		{ 0x008495DC, 5, { 0xE8, 0x2F, 0x38, 0xBE, 0xFF } },
+		{ 0x00849769, 5, { 0xE8, 0x42, 0xB7, 0xBB, 0xFF } },
 		// Decal path
 		{ 0x00BDF6C0, 5, { 0x56, 0x8B, 0xF1, 0xF7, 0x46 } },
 		{ 0x00B9AF60, 5, { 0x83, 0xEC, 0x1C, 0x8B, 0x44 } },

@@ -273,7 +273,7 @@ namespace comp::game::tex_pack
 				LOG_TYPE::LOG_TYPE_STATUS, false);
 
 			auto* fs = new TextureFs();   // leaked with the rest (see g())
-			fs->configure(data_dir, archives);
+			fs->configure(data_dir, archives, loose_files_win());
 
 			for (;;)
 			{

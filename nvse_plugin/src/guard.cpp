@@ -4,7 +4,7 @@ namespace fnvr::guard
 {
 	namespace
 	{
-		constexpr size_t kRegions = 512;
+		constexpr size_t kRegions = 2048;
 
 		// A run of committed, readable pages, as VirtualQuery reported it.
 		struct Region
@@ -20,6 +20,7 @@ namespace fnvr::guard
 		size_t g_count = 0;
 		size_t g_last = 0;  // the run the previous lookup hit
 		DWORD g_owner_thread = 0;
+		uint32_t g_serial = 0;  // cache drops at a frame boundary
 
 		volatile LONG g_faults = 0;
 		uintptr_t g_image_lo = 0, g_image_hi = 0;
@@ -57,6 +58,13 @@ namespace fnvr::guard
 		{
 			if (g_count == kRegions) g_count = 0;
 			const size_t at = upper(lo);
+			// The same run seen from a lower page: one entry, grown downwards.
+			if (at < g_count && g_regions[at].hi == hi)
+			{
+				g_regions[at].lo = lo;
+				g_last = at;
+				return;
+			}
 			std::memmove(&g_regions[at + 1], &g_regions[at], (g_count - at) * sizeof(Region));
 			g_regions[at] = { lo, hi };
 			g_count++;
@@ -140,6 +148,13 @@ namespace fnvr::guard
 		g_owner_thread = GetCurrentThreadId();
 		g_count = 0;
 		g_last = 0;
+		g_serial++;
+	}
+
+	void new_frame_once(uint32_t& seen)
+	{
+		if (seen == g_serial) new_frame();
+		seen = g_serial;
 	}
 
 	bool in_image(uintptr_t p)

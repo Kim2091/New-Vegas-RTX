@@ -12,7 +12,19 @@ namespace comp::game
 	// NiPoint3* (fnv_exe camera_position): the renderer's camera position (BSShader side),
 	// what the WORLD matrices are relative to. It follows the Pip-Boy's menu
 	// camera; the world camera is the engine monitor's (nvse_link facts).
-	inline float* camera_position_ptr    = nullptr;
+	inline float* camera_position_raw    = nullptr;
+	inline float camera_position_last[3] = {};
+
+	// The camera position, from SpeedTree's camera, which the main loop writes
+	// every frame. A tree model load sets it to (0, 0, 0) while it runs (0x6695C4),
+	// so that value reads as the last real position. Null before the address is set.
+	inline const float* camera_position()
+	{
+		if (!camera_position_raw) return nullptr;
+		if (camera_position_raw[0] != 0.0f || camera_position_raw[1] != 0.0f || camera_position_raw[2] != 0.0f)
+			std::memcpy(camera_position_last, camera_position_raw, sizeof(camera_position_last));
+		return camera_position_last;
+	}
 
 	// --- NiDX9Renderer helpers ---
 
@@ -103,6 +115,9 @@ namespace comp::game
 
 	void init_backbuffer_tracking(IDirect3DDevice9* dev);
 	void on_set_render_target(IDirect3DDevice9* dev, DWORD idx, IDirect3DSurface9* surface);
+
+	// A perspective draw to the screen has passed the world draw gates this frame.
+	bool world_draw_seen_this_frame();
 
 	// RT0 is an off-screen target with the backbuffer's size: the Pip-Boy
 	// screen at full resolution, image-space and menu-background targets.

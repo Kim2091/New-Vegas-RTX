@@ -36,8 +36,10 @@
 // textures\characters\facemods\ (the folder the engine's FaceGen export
 // writes, so mods follow it), or by the engine's in-memory face map build
 // from EGT files (bLoadFaceGenHeadEGTFiles), which creates its texture inside
-// the hooked build (facegen_image_texture). Any other plain DEFAULT 2D
-// texture is created MANAGED, as below.
+// the hooked build (facegen_image_texture). Plain DEFAULT 2D textures of at
+// most 32 x 32 are created MANAGED whatever made them: some face maps that size
+// come from outside those hooks. Any other plain DEFAULT 2D texture is created
+// MANAGED, as below.
 //
 // KeepDefaultPoolTextures=0, and the cases above: a D3DPOOL_DEFAULT request
 // with no usage flag but D3DUSAGE_AUTOGENMIPMAP, no shared handle and a
@@ -57,7 +59,7 @@ namespace comp::game::tex_pool
 	// The pool to create a texture in, for a request of `pool`. `ex_device`
 	// is true on a device made with CreateDeviceEx, where D3DPOOL_MANAGED is
 	// not valid.
-	D3DPOOL texture_pool(D3DRESOURCETYPE type, D3DPOOL pool, DWORD usage, D3DFORMAT format,
+	D3DPOOL texture_pool(D3DRESOURCETYPE type, UINT width, UINT height, D3DPOOL pool, DWORD usage, D3DFORMAT format,
 		const HANDLE* shared_handle, bool ex_device);
 
 	// A D3DPOOL_DEFAULT request with no usage flag but D3DUSAGE_AUTOGENMIPMAP,
@@ -78,7 +80,7 @@ namespace comp::game::tex_pool
 	HRESULT create(D3DRESOURCETYPE type, UINT width, UINT height, UINT depth, UINT levels, DWORD usage,
 		D3DFORMAT format, D3DPOOL requested, const HANDLE* shared_handle, bool ex_device, Create&& make)
 	{
-		const D3DPOOL pool = texture_pool(type, requested, usage, format, shared_handle, ex_device);
+		const D3DPOOL pool = texture_pool(type, width, height, requested, usage, format, shared_handle, ex_device);
 		HRESULT hr = make(pool);
 		D3DPOOL created = pool;
 		if (FAILED(hr) && pool != requested)
@@ -121,7 +123,7 @@ namespace comp::game::tex_pool
 		uint64_t kept = 0, kept_bytes = 0;            // plain DEFAULT requests created DEFAULT
 		uint64_t promoted = 0, promoted_bytes = 0;    // plain DEFAULT requests created MANAGED
 		// Why the promoted ones were (KeepDefaultPoolTextures=1).
-		uint64_t by_switch = 0, by_format = 0, by_autogen = 0, by_import = 0, by_facegen = 0;
+		uint64_t by_switch = 0, by_format = 0, by_autogen = 0, by_import = 0, by_facegen = 0, by_small = 0;
 	};
 	Stats stats();
 
@@ -137,4 +139,9 @@ namespace comp::game::tex_pool
 	// Writes the once-per-session line about promoted textures when there
 	// are any (called with the periodic status line).
 	void log_once();
+
+	// Once, in the world: NVTF is loaded and next to no texture has asked for
+	// D3DPOOL_DEFAULT, so its bUseDefaultPoolForTextures is not in effect.
+	// Reported as a problem; no setting is changed.
+	void check_default_pool();
 }

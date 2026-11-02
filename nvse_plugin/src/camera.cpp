@@ -102,6 +102,11 @@ namespace fnvr::camera
 		return g_load_msgs || g_present_loading || loading_menu();
 	}
 
+	bool load_on()
+	{
+		return g_load_msgs || loading_menu();
+	}
+
 	void update()
 	{
 		const bool now = loading();

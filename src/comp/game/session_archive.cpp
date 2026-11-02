@@ -347,15 +347,17 @@ namespace comp::game::session_archive
 		if (!finished()) return {};
 		for (const Made& m : g_made)
 			if (when >= m.from && when < m.to) return m.path;
-		// Made by an earlier process: sessions are zipped in order, so the
-		// first end-of-session zip written after `when` holds it.
+		// Made by an earlier process: the end-of-session zip of the session
+		// that started last before `when` holds it. The start is read from the
+		// file name, since a mod manager's copy changes the modified time.
 		std::wstring name;
-		uint64_t first = 0;
-		session_zip::each_file(shared::common::log_dir() + L"archive\\", L"NewVegasRTX-*.zip", [&](const std::wstring& n, uint64_t t)
+		uint64_t latest = 0;
+		session_zip::each_file(shared::common::log_dir() + L"archive\\", L"NewVegasRTX-*.zip", [&](const std::wstring& n, uint64_t)
 			{
-				if (t > when && (!first || t < first) && !session_zip::is_snapshot(n))
+				const uint64_t start = session_zip::zip_time(n, 0);
+				if (start && start <= when && start >= latest && !session_zip::is_snapshot(n))
 				{
-					first = t;
+					latest = start;
 					name = n;
 				}
 			});
@@ -379,9 +381,10 @@ namespace comp::game::session_archive
 		uint64_t newest = 0;
 		session_zip::each_file(shared::common::log_dir() + L"archive\\", L"NewVegasRTX-*.zip", [&](const std::wstring& n, uint64_t t)
 			{
-				if (t >= newest)
+				const uint64_t when = session_zip::zip_time(n, t);
+				if (when >= newest)
 				{
-					newest = t;
+					newest = when;
 					name = n;
 				}
 			});

@@ -16,7 +16,7 @@
 //   * FFP light positions (camera-relative) move by D;
 //   * API draws are submitted at camera-relative + D.
 //
-// The camera is the engine's camera global (game::camera_position_ptr), what
+// The camera is the engine's camera global (game::camera_position()), what
 // the frame's WORLD matrices are relative to, taken at the first BeginScene
 // and again at the frame's first world draw (at_first_world_draw) if it
 // moved meanwhile. The engine monitor's world camera, which can be a frame
