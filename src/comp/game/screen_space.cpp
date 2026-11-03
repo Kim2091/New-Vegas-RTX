@@ -125,13 +125,13 @@ namespace comp::game::screen_space
 		}
 	}
 
-	void note_applied_projection(const float* proj)
+	void note_applied_projection(const float* proj, bool viewmodel)
 	{
 		if (!proj) return;
 		g_proj00 = proj[0];
 		// D3D perspective: _33 = zf/(zf-zn), _43 = -zn*zf/(zf-zn) -> zn = -_43/_33.
 		g_near = (proj[10] != 0.0f) ? -proj[14] / proj[10] : 0.0f;
-		g_proj_viewmodel = uses_viewmodel_projection();
+		g_proj_viewmodel = viewmodel;
 		g_have_proj = true;
 	}
 

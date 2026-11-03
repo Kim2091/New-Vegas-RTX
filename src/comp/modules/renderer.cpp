@@ -10,7 +10,6 @@
 #include "shared/common/remix_protocol.hpp"
 #include "shared/common/config.hpp"
 #include "comp/game/api_submit.hpp"
-#include "comp/game/pipboy_cursor.hpp"
 #include "comp/game/api_rtxconf.hpp"
 #include "comp/game/scene_statics.hpp"
 #include "comp/game/ps_protocol.hpp"
@@ -766,11 +765,7 @@ namespace comp
 			game::screen_space::tag_draw(dev, route, verts, prims);
 		else
 			remix_protocol::none(dev);
-		// The Pip-Boy's cursor is drawn where the game's pick lands (game/pipboy_cursor.hpp).
-		const bool cursor = screen_space && game::pipboy_cursor::before_2d_draw(dev);
-		const HRESULT hr = draw();
-		if (cursor) game::pipboy_cursor::after_2d_draw(dev);
-		return hr;
+		return draw();
 	}
 
 	HRESULT renderer::on_draw_primitive(IDirect3DDevice9* dev, const D3DPRIMITIVETYPE& PrimitiveType, const UINT& StartVertex, const UINT& PrimitiveCount)
@@ -865,10 +860,7 @@ namespace comp
 				game::screen_space::tag_draw(dev, "DP_PASS_2D", nverts, PrimitiveCount);
 			else
 				remix_protocol::none(dev);
-			// The Pip-Boy's cursor is drawn where the game's pick lands (game/pipboy_cursor.hpp).
-			const bool cursor = screen_space && game::pipboy_cursor::before_2d_draw(dev);
 			hr = draw();
-			if (cursor) game::pipboy_cursor::after_2d_draw(dev);
 			im->m_stats._drawcall_prim.track_single();
 			im->m_stats._drawcall_using_vs.track_single();
 		}
@@ -1081,10 +1073,7 @@ namespace comp
 			// orthographic quad at the last FFP projection's near plane
 			// ([FFP] HideScreenSpaceDraws, game/screen_space.hpp).
 			game::screen_space::tag_draw(dev, "PASS_2D", NumVertices, primCount);
-			// The Pip-Boy's cursor is drawn where the game's pick lands (game/pipboy_cursor.hpp).
-			const bool cursor = game::pipboy_cursor::before_2d_draw(dev);
 			hr = draw();
-			if (cursor) game::pipboy_cursor::after_2d_draw(dev);
 			im->m_stats._drawcall_indexed_prim.track_single();
 			im->m_stats._drawcall_indexed_prim_using_vs.track_single();
 		}

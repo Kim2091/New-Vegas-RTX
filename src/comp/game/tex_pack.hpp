@@ -10,6 +10,8 @@
 //     set_d3d_texture) for NiDX9SourceTextureData objects and records D3D
 //     texture -> the owning NiSourceTexture's file name. Runs on whatever
 //     thread the engine loads textures on.
+//   * path_under() (render thread) tells whether a texture's file is under a
+//     folder, from the same record.
 //   * height_for() (render thread, per draw) returns the loaded height map for
 //     a diffuse, or nullptr. The first request for a path queues it; a worker
 //     thread resolves it (loose Data\Textures first, then the loaded BSAs,
@@ -31,6 +33,13 @@ namespace comp::game::tex_pack
 	// `pending` (optional) is set when nullptr only means "not loaded yet": a
 	// lookup for this diffuse is queued or loading and may still find a map.
 	IDirect3DTexture9* height_for(IDirect3DBaseTexture9* diffuse, bool* pending = nullptr);
+
+	// True when the texture's recorded file path starts with `folder` (lower
+	// case, backslashes, relative to the data root, e.g. "textures\trees\"; the
+	// engine's "data\" prefix is already dropped). False when the
+	// texture has no recorded path, which is always so while the texture hook is
+	// off (HeightMaps=0). Render thread.
+	bool path_under(IDirect3DBaseTexture9* tex, const char* folder);
 
 	// A draw actually carried a pack height map (stats / one-shot log).
 	void note_bound(IDirect3DBaseTexture9* diffuse, UINT stage);

@@ -8,6 +8,7 @@
 #include "scene_graph.hpp"
 #include "nvse_link.hpp"
 #include "vs_expand.hpp"
+#include "tex_pack.hpp"
 
 #include "shared/common/ffp_state.hpp"
 #include "shared/common/ps_reflect.hpp"
@@ -80,7 +81,10 @@
  * unless the draw blends additively, which the runtime already turns into
  * emission, the texture as its own glow at UnlitEmissiveIntensity, tinted
  * by MaterialColor (the tint needs ApiGlowTint; a tinted draw without it gets
- * no glow rather than a white one).
+ * no glow rather than a white one). A texture whose file is under
+ * textures\trees\ (tree leaves, NoLighting with an alpha test) gets no glow
+ * and is lit as an ordinary cutout; the path comes from tex_pack's record, so
+ * with [TexturePacks] HeightMaps off it is unknown and the glow stays.
  *
  * Per frame
  * ---------
@@ -812,7 +816,8 @@ namespace comp::game::api_submit
 			if (hdr && material::albedo_tint_supported())
 				for (int k = 0; k < 3; k++) md.albedo_tint[k] = (std::max)(mc[k], 1.0f);
 			const bool additive = material::draw_is_additive(dev);
-			if (cfg.unlit_emissive_intensity > 0.0f && !additive && (!tinted || material::glow_tint_ready()))
+			const bool tree_leaf = tex_pack::path_under(md.diffuse, "textures\\trees\\");
+			if (cfg.unlit_emissive_intensity > 0.0f && !additive && !tree_leaf && (!tinted || material::glow_tint_ready()))
 			{
 				md.glow = md.diffuse;
 				md.emissive_intensity = cfg.unlit_emissive_intensity;
@@ -822,6 +827,8 @@ namespace comp::game::api_submit
 			}
 			else if (additive)
 				dec.glow = "additive blend: the runtime's emissive-blend override (rtx.emissiveBlendOverrideEmissiveIntensity)";
+			else if (tree_leaf)
+				dec.glow = "NONE: texture under textures\\trees\\ (tree leaves are lit, not self-lit)";
 			else if (cfg.unlit_emissive_intensity <= 0.0f)
 				dec.glow = "NONE: [RemixApi] UnlitEmissiveIntensity=0 (Host Settings: Unlit FX emissive intensity)";
 			else

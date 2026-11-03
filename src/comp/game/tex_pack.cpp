@@ -624,6 +624,29 @@ namespace comp::game::tex_pack
 		}
 	}
 
+	bool path_under(IDirect3DBaseTexture9* tex, const char* folder)
+	{
+		if (!tex || !folder || !g_hook_installed) return false;
+		auto& G = g();
+		PathRec* rec;
+		const uint32_t ep = G.epoch.load(std::memory_order_acquire);
+		if (tex == G.memo_tex && ep == G.memo_epoch)
+		{
+			rec = G.memo_rec;
+		}
+		else
+		{
+			AcquireSRWLockShared(&G.lock);
+			const auto it = G.by_tex.find(tex);
+			rec = it != G.by_tex.end() ? it->second : nullptr;
+			ReleaseSRWLockShared(&G.lock);
+			G.memo_tex = tex;
+			G.memo_rec = rec;
+			G.memo_epoch = ep;
+		}
+		return rec && rec->diffuse.rfind(folder, 0) == 0;
+	}
+
 	void note_bound(IDirect3DBaseTexture9* diffuse, UINT stage)
 	{
 		auto& G = g();

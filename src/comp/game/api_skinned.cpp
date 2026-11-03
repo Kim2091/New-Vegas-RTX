@@ -6,6 +6,7 @@
 #include "api_material.hpp"
 #include "api_textures.hpp"
 #include "api_camera.hpp"
+#include "api_common.hpp"
 #include "api_hair_bake.hpp"
 #include "scene_graph.hpp"
 #include "stable_origin.hpp"
@@ -55,7 +56,8 @@
  *             statics).
  * First-person parts carry VIEW_MODEL when [RemixApi] ViewModelCamera sent
  * the frame's view-model camera (api_camera.hpp); otherwise they are ordinary
- * world instances.
+ * world instances. The Pip-Boy's own (its arm) instead carry the Pip-Boy's FOV
+ * in their bones (api_camera::pipboy_fold), like its D3D9 draws.
  * Shadow maps and other off-screen targets never reach the SKINNED route.
  *
  * Mesh
@@ -680,14 +682,34 @@ namespace comp::game::api_submit
 				anchor[r] = std::round((static_cast<double>(game::bone_rows[0][r * 4 + 3]) + dshift[r]) * kAnchorSteps) /
 					kAnchorSteps;
 
+			// The Pip-Boy's arm: its FOV folded into the bones, as the Pip-Boy's
+			// D3D9 draws fold it into WORLD (api_camera::pipboy_fold).
+			D3DMATRIX fold;
+			const bool folded = api::pipboy_own_draw() && api_camera::pipboy_fold(fold);
+
 			remixapi_Transform bones[MAX_FFP_BONES];
 			for (int i = 0; i < nb; i++)
 			{
 				const float* c = game::bone_rows[i];
+				// Row r of the bone is register c[3i + r]: no transpose. The
+				// bone maps column vectors, so the fold (row vectors) goes on
+				// its left transposed: row r of the result is sum_k F[k][r] *
+				// bone row k, plus F[3][r] in the translation.
+				float folded_rows[12];
+				if (folded)
+				{
+					for (int r = 0; r < 3; r++)
+						for (int col = 0; col < 4; col++)
+						{
+							float v = col == 3 ? fold.m[3][r] : 0.0f;
+							for (int k = 0; k < 3; k++) v += fold.m[k][r] * c[k * 4 + col];
+							folded_rows[r * 4 + col] = v;
+						}
+					c = folded_rows;
+				}
 				auto& m = bones[i].matrix;
 				for (int r = 0; r < 3; r++)
 				{
-					// Row r of the bone is register c[3i + r]: no transpose.
 					m[r][0] = c[r * 4 + 0];
 					m[r][1] = c[r * 4 + 1];
 					m[r][2] = c[r * 4 + 2];
@@ -760,8 +782,9 @@ namespace comp::game::api_submit
 			ii.sType = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO;
 			ii.pNext = &bones_ext;
 			// First-person arms: VIEW_MODEL, with the frame's view-model camera
-			// ([RemixApi] ViewModelCamera; 0 when off or not first-person).
-			ii.categoryFlags = mat.categories | decal_categories | api_camera::view_model_categories(dev);
+			// ([RemixApi] ViewModelCamera; 0 when off or not first-person). A
+			// folded arm is already placed for the world camera.
+			ii.categoryFlags = mat.categories | decal_categories | (folded ? 0u : api_camera::view_model_categories(dev));
 			ii.mesh = sm.mesh;
 			// The anchor in render units. The bones stay in FNV units: the
 			// instance transform scales the skinned mesh as a whole.

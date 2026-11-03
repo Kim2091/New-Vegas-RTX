@@ -53,4 +53,23 @@ namespace comp::game::api_camera
 	// SetupCamera in the bridge, or a projection that isn't a plain
 	// perspective; the part stays a world instance).
 	remixapi_InstanceCategoryFlags view_model_categories(IDirect3DDevice9* dev);
+
+	// The world camera the runtime took this frame (raw renderer VIEW and
+	// PROJECTION, before the stable origin and the world unit scale). False
+	// when none went out this frame.
+	bool world_camera(D3DMATRIX& view, D3DMATRIX& proj);
+
+	// The Pip-Boy's FOV through the world camera. With rtx.viewModel.enable
+	// off, the runtime traces every draw through the frame's world camera,
+	// while the engine projects the Pip-Boy (its model, screen and arm) with
+	// fPipboy1stPersonFOV. For a draw the Pip-Boy owns (api::pipboy_own_draw),
+	// `fold` is the map of the raw camera-relative world frame (row vectors)
+	//   F = Vpip * S * inverse(Vworld)
+	// with S scaling view x and y by Ppip._11 / Pworld._11 and Ppip._22 /
+	// Pworld._22 (and moving them by the difference in the _31 / _32 terms),
+	// z kept. A point p moved to p * F shows through the world camera on the
+	// pixel the engine's Pip-Boy camera draws p on, so the traced Pip-Boy
+	// follows the game's FOV setting. False (draw as it is) when no world
+	// camera went out this frame or the draw's camera is that camera.
+	bool pipboy_fold(D3DMATRIX& fold);
 }

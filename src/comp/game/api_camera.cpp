@@ -2,7 +2,6 @@
 #include "api_camera.hpp"
 #include "stable_origin.hpp"
 #include "menu_scene.hpp"
-#include "pipboy_cursor.hpp"
 
 #include "shared/common/config.hpp"
 #include "shared/common/ffp_state.hpp"
@@ -33,6 +32,68 @@ namespace comp::game::api_camera
 		uint64_t g_vm_sent = 0;
 		constexpr remixapi_InstanceCategoryFlags kViewModelBit =
 			static_cast<remixapi_InstanceCategoryFlags>(REMIXAPI_INSTANCE_CATEGORY_BIT_VIEW_MODEL);
+
+		// The world camera the runtime took this frame (raw renderer VIEW and
+		// PROJECTION) and the frame it went out.
+		D3DXMATRIX g_world_view, g_world_proj;
+		UINT g_world_frame = 0xFFFFFFFFu;
+
+		// The Pip-Boy fold's first use, for the log.
+		bool g_fold_logged = false;
+
+		bool perspective(const float* p)
+		{
+			return p[11] == 1.0f && p[15] == 0.0f && p[0] > 1e-4f && p[5] > 1e-4f;
+		}
+	}
+
+	bool world_camera(D3DMATRIX& view, D3DMATRIX& proj)
+	{
+		if (g_world_frame != shared::common::ffp_state::get().frame_count()) return false;
+		view = g_world_view;
+		proj = g_world_proj;
+		return true;
+	}
+
+	bool pipboy_fold(D3DMATRIX& fold)
+	{
+		if (g_world_frame != shared::common::ffp_state::get().frame_count()) return false;
+		const float* view = game::get_renderer_matrix(RENDERER_VIEW_OFF);
+		const float* proj = game::get_renderer_matrix(RENDERER_PROJ_OFF);
+		if (!view || !proj || !perspective(proj)) return false;
+		if (std::memcmp(view, &g_world_view, sizeof(g_world_view)) == 0 &&
+			std::memcmp(proj, &g_world_proj, sizeof(g_world_proj)) == 0) return false;
+
+		// S, in view space: x and y such that the world projection maps them
+		// where the Pip-Boy's maps the originals (x' = (P00 x + P20 z) / Pw00
+		// - Pw20 z / Pw00, the same for y); z is kept.
+		const float* pw = g_world_proj;
+		D3DXMATRIX s;
+		D3DXMatrixIdentity(&s);
+		s._11 = proj[0] / pw[0];
+		s._22 = proj[5] / pw[5];
+		s._31 = (proj[8] - pw[8]) / pw[0];
+		s._32 = (proj[9] - pw[9]) / pw[5];
+
+		D3DXMATRIX inv_world_view;
+		if (!D3DXMatrixInverse(&inv_world_view, nullptr, &g_world_view)) return false;
+		D3DXMATRIX vs, out;
+		D3DXMatrixMultiply(&vs, reinterpret_cast<const D3DXMATRIX*>(view), &s);
+		D3DXMatrixMultiply(&out, &vs, &inv_world_view);
+		for (int r = 0; r < 4; r++)
+			for (int c = 0; c < 4; c++)
+				if (!std::isfinite(out.m[r][c])) return false;
+		fold = out;
+
+		if (!g_fold_logged)
+		{
+			g_fold_logged = true;
+			shared::common::log("RemixApi", std::format("PipBoyFov: the Pip-Boy is traced through the world camera "
+				"at its own FOV -- Pip-Boy _11={:.3f} _22={:.3f}, world _11={:.3f} _22={:.3f} (view x / y scale "
+				"{:.3f} / {:.3f})", proj[0], proj[5], pw[0], pw[5], s._11, s._22),
+				shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+		}
+		return true;
 	}
 
 	remixapi_InstanceCategoryFlags view_model_categories(IDirect3DDevice9* dev)
@@ -131,7 +192,12 @@ namespace comp::game::api_camera
 			std::memcpy(info.projection, &p, sizeof(info.projection));
 
 			const auto rc = api.m_bridge.SetupCamera(&info);
-			if (rc == REMIXAPI_ERROR_CODE_SUCCESS) pipboy_cursor::note_world_camera(view, proj);
+			if (rc == REMIXAPI_ERROR_CODE_SUCCESS)
+			{
+				std::memcpy(&g_world_view, view, sizeof(g_world_view));
+				std::memcpy(&g_world_proj, proj, sizeof(g_world_proj));
+				g_world_frame = frame;
+			}
 			if (source == Source::Draw) g_from_draw++;
 			else g_from_pass++;
 			if (!g_logged_first)

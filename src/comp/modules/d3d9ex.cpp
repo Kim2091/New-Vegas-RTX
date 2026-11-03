@@ -26,7 +26,6 @@ using comp::tracer;
 #include "comp/game/ui_boundary.hpp"
 #include "comp/game/call_chain.hpp"
 #include "comp/game/screen_space.hpp"
-#include "comp/game/pipboy_cursor.hpp"
 #include "comp/game/stable_origin.hpp"
 #include "comp/game/nvse_link.hpp"
 #include "comp/game/underwater.hpp"
@@ -318,8 +317,6 @@ namespace comp
 		// The frame's world camera source ([RemixApi] FallbackCamera), while
 		// frame_count() still names the frame.
 		game::api_camera::on_present();
-		// The Pip-Boy cursor's session lines, while frame_count() still names the frame.
-		game::pipboy_cursor::on_present();
 		// The UI boundary's frame flags, while frame_count() still names the frame.
 		game::ui_boundary::on_present();
 		// Every hooked engine site, at the first Present and every 600 frames.

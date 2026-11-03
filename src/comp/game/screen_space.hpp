@@ -10,8 +10,8 @@
 // position with the device's FFP VIEW / PROJECTION (d3d9_rtx.cpp
 // prepareVertexCapture: viewToWorld = inverse(VIEW), invProj = inverse(PROJ)).
 // A shader draw carries none of its own: the device still holds whatever the
-// last FFP-engaged draw set: a perspective projection, often the zoomed
-// Pip-Boy / viewmodel one. The orthographic quad comes out as a small
+// last FFP-engaged draw set: a perspective projection, the world one or a
+// zoomed viewmodel one. The orthographic quad comes out as a small
 // rectangle at that projection's near plane, a few units in front of the
 // player's eye: a ray-traced object that casts shadows (onto the Pip-Boy
 // screen) and that the main camera, with its own FOV, shows away from where
@@ -42,8 +42,9 @@ namespace comp::game::screen_space
 	void note_ffp_draw(IDirect3DDevice9* dev, const char* route, UINT verts, UINT prims);
 
 	// game::apply_transforms: the projection the device now holds (what a
-	// later shader draw would be un-projected with).
-	void note_applied_projection(const float* proj);
+	// later shader draw would be un-projected with) and whether it is the
+	// viewmodel / Pip-Boy one.
+	void note_applied_projection(const float* proj, bool viewmodel);
 
 	// Present: the per-interval summary.
 	void on_present();

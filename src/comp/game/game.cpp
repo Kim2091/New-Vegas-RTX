@@ -20,6 +20,8 @@
 #include "underwater.hpp"
 #include "vats.hpp"
 #include "save_thumbnail.hpp"
+#include "api_common.hpp"
+#include "api_camera.hpp"
 
 /*
  * Fallout: New Vegas game-specific code: renderer reads, the fake-shadow
@@ -351,11 +353,26 @@ namespace comp::game
 
 		if (world && view && proj)
 		{
+			// A Pip-Boy draw goes out with the world camera, its FOV folded
+			// into WORLD (api_camera::pipboy_fold).
+			D3DMATRIX fold, world_view, world_proj;
+			if (api::pipboy_own_draw() && api_camera::world_camera(world_view, world_proj) &&
+				api_camera::pipboy_fold(fold))
+			{
+				D3DXMATRIX folded;
+				D3DXMatrixMultiply(&folded, reinterpret_cast<const D3DXMATRIX*>(world),
+					reinterpret_cast<const D3DXMATRIX*>(&fold));
+				stable_origin::set_transform(dev, D3DTS_WORLD, &folded);
+				stable_origin::set_transform(dev, D3DTS_VIEW, &world_view);
+				stable_origin::set_transform(dev, D3DTS_PROJECTION, &world_proj);
+				screen_space::note_applied_projection(&world_proj.m[0][0], false);
+				return;
+			}
 			// Into the render frame (stable origin and world unit scale).
 			stable_origin::set_transform(dev, D3DTS_WORLD, reinterpret_cast<const D3DMATRIX*>(world));
 			stable_origin::set_transform(dev, D3DTS_VIEW, reinterpret_cast<const D3DMATRIX*>(view));
 			stable_origin::set_transform(dev, D3DTS_PROJECTION, reinterpret_cast<const D3DMATRIX*>(proj));
-			screen_space::note_applied_projection(proj);
+			screen_space::note_applied_projection(proj, uses_viewmodel_projection());
 		}
 	}
 

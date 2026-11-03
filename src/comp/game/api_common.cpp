@@ -7,7 +7,6 @@
 #include "api_identity.hpp"
 #include "api_material.hpp"
 #include "nvse_link.hpp"
-#include "pipboy_cursor.hpp"
 #include "scene_graph.hpp"
 #include "shared/fnv_exe.hpp"
 #include "tex_pool.hpp"
@@ -823,7 +822,6 @@ namespace comp::game::api
 	{
 		const bool own = pipboy_own_draw();
 		remix_protocol::set_per_draw_path(own);
-		if (own) pipboy_cursor::note_pipboy_draw();
 		static bool s_logged = false;
 		if (!own || s_logged) return;
 		s_logged = true;
