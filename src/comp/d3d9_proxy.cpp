@@ -119,15 +119,54 @@ namespace d3d9_proxy
 		return 0;
 	}
 
-	static DWORD WINAPI renderer_mismatch_box(LPVOID)
+	// Takes ownership of the heap-allocated text it is given.
+	static DWORD WINAPI renderer_mismatch_box(LPVOID param)
 	{
-		MessageBoxW(nullptr,
-			L"New Vegas RTX found renderer files from two different versions: d3d9_remix.dll does not match "
-			L"NvRemixBridge.exe in the .trex folder. This usually means an old .trex folder is still there.\n\nThe game "
-			L"starts without RTX. Delete the .trex and trex folders from the game folder, then install the mod again. With "
-			L"Mod Organizer 2, delete them from the real game folder and turn off any older version of the mod.",
-			L"New Vegas RTX", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+		const std::unique_ptr<std::wstring> text(static_cast<std::wstring*>(param));
+		MessageBoxW(nullptr, text->c_str(), L"New Vegas RTX", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 		return 0;
+	}
+
+	// A path or version from the ANSI code page, as UTF-16.
+	static std::wstring to_wide(const std::string& s)
+	{
+		if (s.empty()) return {};
+		const int len = MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+		std::wstring w(len > 0 ? len : 0, L'\0');
+		if (len > 0) MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), w.data(), len);
+		return w;
+	}
+
+	// Names both files with their versions and the folder to delete. When the game folder holds both .trex and
+	// trex, the renderer starts from .trex, a leftover from a manual install next to the Mod Organizer 2 copy in trex.
+	static void show_renderer_mismatch(const std::string& client, const std::string& client_version,
+		const std::string& server, const std::string& server_version)
+	{
+		const std::string server_dir = server.substr(0, server.find_last_of('\\'));
+		const std::string mo2_dir = shared::globals::root_path + "\\trex";
+		const DWORD mo2_attributes = GetFileAttributesA(mo2_dir.c_str());
+		const bool both = server_dir.ends_with("\\.trex") && mo2_attributes != INVALID_FILE_ATTRIBUTES &&
+			(mo2_attributes & FILE_ATTRIBUTE_DIRECTORY);
+
+		std::wstring text = std::format(
+			L"New Vegas RTX found renderer files from two different versions, so the game starts without RTX.\n\n"
+			L"Bridge client:\n{}\nVersion: {}\n\nBridge server:\n{}\nVersion: {}\n\n",
+			to_wide(client), to_wide(client_version), to_wide(server), to_wide(server_version));
+		if (both)
+			text += std::format(
+				L"The game folder has both a .trex folder and a trex folder. The trex folder comes from Mod Organizer 2. "
+				L"The .trex folder is an old leftover from a manual install, and the game uses it instead of trex.\n\n"
+				L"To fix this, delete this folder:\n{}\n\nThen start the game again.", to_wide(server_dir));
+		else
+			text += std::format(
+				L"To fix this, delete this folder:\n{}\n\nThen install the mod again, so that all its files come from "
+				L"the same version. With Mod Organizer 2, also turn off any older version of the mod.", to_wide(server_dir));
+
+		auto* param = new std::wstring(std::move(text));
+		if (const auto t = CreateThread(nullptr, 0, renderer_mismatch_box, param, 0, nullptr); t)
+			CloseHandle(t);
+		else
+			delete param;
 	}
 
 	bool init()
@@ -136,7 +175,8 @@ namespace d3d9_proxy
 		const bool use_remix = cfg.remix.enabled && !cfg.remix.dll_name.empty();
 		const std::string renderer = use_remix ? renderer_path() : std::string{};
 		// The bridge server refuses to run with a client from another commit, and the game closes with it.
-		const std::string client_version = !renderer.empty() ? bridge_version(shared::globals::root_path + "\\" + cfg.remix.dll_name) : std::string{};
+		const std::string client = shared::globals::root_path + "\\" + cfg.remix.dll_name;
+		const std::string client_version = !renderer.empty() ? bridge_version(client) : std::string{};
 		const std::string server_version = !client_version.empty() ? bridge_version(renderer) : std::string{};
 
 		// The Remix bridge first ([Remix] DLLName, default d3d9_remix.dll).
@@ -149,9 +189,9 @@ namespace d3d9_proxy
 		else if (!server_version.empty() && server_version != client_version)
 		{
 			shared::common::log("Proxy", std::format("The renderer files are from different versions: {} is {}, {} is {}. The game "
-				"starts with the system d3d9, without RTX.", cfg.remix.dll_name, client_version, renderer, server_version),
+				"starts with the system d3d9, without RTX.", client, client_version, renderer, server_version),
 				shared::common::LOG_TYPE::LOG_TYPE_ERROR);
-			if (const auto t = CreateThread(nullptr, 0, renderer_mismatch_box, nullptr, 0, nullptr); t) CloseHandle(t);
+			show_renderer_mismatch(client, client_version, renderer, server_version);
 		}
 		else if (use_remix)
 		{

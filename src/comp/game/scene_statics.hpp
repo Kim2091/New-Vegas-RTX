@@ -126,6 +126,16 @@ namespace comp::game::scene_statics
 	// any retained instance of its own for it.
 	bool claimed(uintptr_t geo);
 
+	// The pass being drawn is a light card: the draw blends additively, its
+	// geometry is an NiTriShape / NiTriStrips with BSShaderNoLightingProperty
+	// and an additive NiAlphaProperty (destination ONE), under an
+	// NiBillboardNode or with shader flags1 External_Emittance, and its owner
+	// is a placed STAT reference. Draw capture and the unlit path refuse it,
+	// so it is not drawn. The shape is read once per geometry (classify), the
+	// owner at its first draw the owner map can answer. False while
+	// SceneGraphStatics is inactive. Render thread.
+	bool light_card(IDirect3DDevice9* dev);
+
 	// Draw capture asks before it makes a stable draw of `geo` a retained
 	// instance kept while culled (api_statics.cpp): the geometry is known,
 	// not claimed, and owned (not culled, detached or disabled, not under a

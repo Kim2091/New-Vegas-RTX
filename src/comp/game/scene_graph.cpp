@@ -485,6 +485,7 @@ namespace comp::game::scene_graph
 			ci.subtree_tree = (bases & (kBaseTree | kBaseBillboard)) != 0;
 			ci.subtree_switch = (bases & (kBaseLod | kBaseSwitch | kBaseRange)) != 0;
 			ci.subtree_exclusive = (bases & (kBaseLod | kBaseSwitch)) != 0;
+			ci.billboard = (bases & kBaseBillboard) != 0;
 			ci.shade_water = (bases & kBaseWaterShader) != 0;
 			ci.shade_property = (bases & kBaseShaderProperty) != 0;
 			ci.segmented = ci.name == "BSSegmentedTriShape";
@@ -493,6 +494,7 @@ namespace comp::game::scene_graph
 				ci.leaf = ci.name == "NiTriShape" ? Leaf::TriShape : ci.name == "NiTriStrips" ? Leaf::TriStrips
 					: Leaf::OtherGeometry;
 			ci.shade_ppl = ci.name == "BSShaderPPLightingProperty" || ci.name == "Lighting30ShaderProperty";
+			ci.shade_no_lighting = ci.name == "BSShaderNoLightingProperty";
 			ci.cell = ci.name == "TESObjectCELL";
 			ci.worldspace = ci.name == "TESWorldSpace";
 		}

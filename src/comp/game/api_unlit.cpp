@@ -6,6 +6,7 @@
 #include "api_material.hpp"
 #include "api_camera.hpp"
 #include "scene_graph.hpp"
+#include "scene_statics.hpp"
 #include "nvse_link.hpp"
 #include "vs_expand.hpp"
 #include "tex_pack.hpp"
@@ -27,7 +28,8 @@
  * Pip-Boy's own draws: its screen FX keep the D3D9 route.
  *   * scene   not the Pip-Boy's own first-person draws while it is not
  *             closed (api::pipboy_draw); other first-person draws carry
- *             VIEW_MODEL.
+ *             VIEW_MODEL. Not a light card (scene_statics::light_card: an
+ *             additive glow, flare or light-beam card of a placed STAT).
  *   * layout  stream 0; POSITION float3/4, TEXCOORD0; NORMAL float3 and
  *             COLOR optional (no normal: face normals are computed).
  *   * buffers neither DYNAMIC, streamed into nor refilled after a mesh was
@@ -137,11 +139,11 @@ namespace comp::game::api_submit
 
 		enum class Reason : uint8_t
 		{
-			Inactive, PipBoy, Shader, Layout, Dynamic, Rewritten, ColorWrite, Blend, RtxConf,
+			Inactive, PipBoy, LightCard, Shader, Layout, Dynamic, Rewritten, ColorWrite, Blend, RtxConf,
 			Texture, Budget, Build, Retry, Submit, Count
 		};
 		constexpr const char* kReasonNames[] = {
-			"inactive", "pipboy", "shader", "layout", "dynamic", "rewritten", "colorwrite", "blend",
+			"inactive", "pipboy", "lightCard", "shader", "layout", "dynamic", "rewritten", "colorwrite", "blend",
 			"rtxconf", "texture", "budget", "build", "retry", "submit",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
@@ -757,6 +759,7 @@ namespace comp::game::api_submit
 
 			if (!bridge() || !world_matrix()) return refuse(Reason::Inactive);
 			if (pipboy_draw()) return refuse(Reason::PipBoy);
+			if (scene_statics::light_card(dev)) return refuse(Reason::LightCard);
 			dec.viewmodel = game::uses_viewmodel_projection();
 			if (!psmap || !psmap->has(PsSlotRole::Diffuse)) return refuse(Reason::Shader);
 

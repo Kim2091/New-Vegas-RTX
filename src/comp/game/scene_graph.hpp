@@ -139,6 +139,7 @@ namespace comp::game::scene_graph
 		constexpr uint32_t SF1_vertexAlpha = 1u << 3;       // Vertex_Alpha: the shader uses the vertex colour's alpha
 		constexpr uint32_t SF1_decal = 1u << 26;            // Decal_Single_Pass
 		constexpr uint32_t SF1_dynamicDecal = 1u << 27;     // Dynamic_Decal_Single_Pass
+		constexpr uint32_t SF1_externalEmittance = 1u << 29;   // External_Emittance
 		constexpr uint32_t SF2_zWrite = 1u << 0;            // ZBuffer_Write (log only)
 		constexpr uint32_t SF2_alphaDecal = 1u << 21;       // Alpha_Decal
 		constexpr uint32_t ALPHA_flags = 0x18;              // u16; bit 0 blend, bit 9 test, bits 10-12 func (U)
@@ -211,10 +212,12 @@ namespace comp::game::scene_graph
 		bool subtree_tree = false;
 		bool subtree_switch = false;
 		bool subtree_exclusive = false;   // LOD / switch node: one child branch drawn at a time (not range nodes)
+		bool billboard = false;       // derives from NiBillboardNode (camera-facing)
 		// BSShaderPPLightingProperty, or its Lighting30ShaderProperty subclass
 		// (same texture arrays); not the SpeedTree / hair subclasses.
 		bool shade_ppl = false;
 		bool shade_water = false;     // WaterShaderProperty (and subclasses)
+		bool shade_no_lighting = false;   // BSShaderNoLightingProperty (exact class)
 		bool shade_property = false;  // derives from BSShaderProperty (SHADE_flags1 / 2 are its fields)
 		bool segmented = false;       // BSSegmentedTriShape (land / LOD chunks)
 		bool source_texture = false;  // derives from NiSourceTexture

@@ -17,7 +17,7 @@ namespace comp::game::ui_boundary
 		constexpr UINT kLogWindow = 600;
 
 		// The engine's pass enum (engine_class.cpp).
-		constexpr uint16_t kPassBloodSplatterFirst = 0x2F0, kPassBloodSplatterLast = 0x2F1;
+		constexpr uint16_t kPassBloodSplatter = 0x2F1;
 		constexpr uint16_t kPassTile = 0x2F5;
 
 		// Written by the code caves on the game's main thread, which also
@@ -131,8 +131,7 @@ namespace comp::game::ui_boundary
 	{
 		if (g_world == 0) return false;
 		if (g_passed != 0) return true;
-		const uint16_t pass = scene_graph::current_pass_type();
-		return pass >= kPassBloodSplatterFirst && pass <= kPassBloodSplatterLast;
+		return scene_graph::current_pass_type() == kPassBloodSplatter;
 	}
 
 	bool no_world_ui_draw()

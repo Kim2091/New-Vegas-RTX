@@ -198,6 +198,14 @@ namespace comp::game::scene_statics
 
 		enum class State : uint8_t { Candidate, Refused, Live };
 
+		// light_card: No, or the shape read at classify (Shape) and then its
+		// owner (Card for a STAT reference, else No).
+		enum class Glow : uint8_t { No, Shape, Card };
+		// A Shape whose owner the owner map doesn't know yet is asked again
+		// after this many frames.
+		constexpr UINT kGlowOwnerRetryFrames = 60;
+		constexpr uint32_t kMaxLightCardLogs = 16;
+
 		// Where a member's seed stands (status line "members[...]").
 		//   claimed   Live from its seed record (or drawn first)
 		//   hidden    app-culled, disabled or detached right now, or under a
@@ -316,6 +324,8 @@ namespace comp::game::scene_statics
 			bool provisional = false;
 			uint8_t confirm_frames = 0;       // frames a provisional claim's passes reached the renderer unconfirmed
 			UINT consume_frame = kNoFrame;    // the renderer drops its draws this frame (provisional / replaced)
+			Glow glow = Glow::No;             // light_card
+			UINT glow_retry = 0;              // Glow::Shape: the owner is asked again from this frame
 		};
 
 		struct Mat
@@ -930,6 +940,27 @@ namespace comp::game::scene_statics
 			return nvse_link::owner_of(geo, o) && (o.flags & FNVR_OW_ACTOR);
 		}
 
+		// light_card's shape: BSShaderNoLightingProperty, an additive
+		// NiAlphaProperty (blend on, destination factor 0 = ONE), and shader
+		// flags1 External_Emittance or an NiBillboardNode above the geometry.
+		bool light_card_shape(uintptr_t geo, const sg::ClassInfo* sci, uintptr_t shade, bool have_af, uint16_t af)
+		{
+			if (!sci || !sci->shade_no_lighting || !have_af || !(af & 1u) || ((af >> 5) & 0xFu) != 0) return false;
+			sg::ShadeFlags sf;
+			if (sg::read_shade_flags(shade, sf) && (sf.flags1 & sg::fnv::SF1_externalEmittance)) return true;
+			uintptr_t node = geo;
+			for (int hop = 0; hop < kMaxChainHops; hop++)
+			{
+				uintptr_t parent = 0;
+				uint32_t flags = 0;
+				if (!sg::read_link(node, parent, flags) || !parent) return false;
+				const sg::ClassInfo* pci = sg::class_of(parent);
+				if (pci && pci->billboard) return true;
+				node = parent;
+			}
+			return false;
+		}
+
 		// What the geometry is decides once whether it can be a candidate:
 		// at its first render pass (discover) or its first seed. The caller
 		// keeps it alive (the engine renders it, or begin_resolve).
@@ -955,7 +986,11 @@ namespace comp::game::scene_statics
 				AlphaKind ak = AlphaKind::Opaque;
 				const Reason ar = alpha_class(have_af, af, ak);
 				if (sci && sci->shade_water) fail(Reason::Water);
-				else if (!sci || !sci->shade_ppl) fail(Reason::Shader);
+				else if (!sci || !sci->shade_ppl)
+				{
+					if (light_card_shape(geo, sci, shade, have_af, af)) r.glow = Glow::Shape;
+					fail(Reason::Shader);
+				}
 				else if (ar != Reason::Count) fail(ar);
 				else
 				{
@@ -4058,6 +4093,38 @@ namespace comp::game::scene_statics
 		if (!g_active || !geo) return false;
 		const auto it = g_geos.find(geo);
 		return it != g_geos.end() && it->second.state == State::Live;
+	}
+
+	bool light_card(IDirect3DDevice9* dev)
+	{
+		if (!g_active) return false;
+		const uintptr_t geo = sg::current_geometry();
+		if (!geo || sg::death_pending(geo)) return false;
+		const auto it = g_geos.find(geo);
+		if (it == g_geos.end()) return false;
+		Rec& r = it->second;
+		if (r.glow == Glow::No || !material::draw_is_additive(dev)) return false;
+		if (r.glow == Glow::Shape)
+		{
+			const UINT now = frame();
+			if (now < r.glow_retry) return false;
+			FnvRemixOwner o;
+			if (!nvse_link::owner_of(geo, o))
+			{
+				r.glow_retry = now + kGlowOwnerRetryFrames;
+				return false;
+			}
+			const bool card = o.base_type == sg::fnv::kFormType_STAT && !(o.flags & FNVR_OW_ACTOR);
+			r.glow = card ? Glow::Card : Glow::No;
+			static uint32_t s_logged = 0;
+			if (card && s_logged < kMaxLightCardLogs)
+			{
+				s_logged++;
+				shared::common::log("SceneStatics", std::format("light card #{}: geo=0x{:X} ref {:08X} (STAT), alpha 0x{:04X}: "
+					"not drawn", s_logged, geo, o.ref_id, r.alpha_flags), shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
+			}
+		}
+		return r.glow == Glow::Card;
 	}
 
 	bool capture_may_retain(uintptr_t geo)

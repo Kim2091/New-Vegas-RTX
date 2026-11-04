@@ -117,12 +117,12 @@ namespace comp::game::api_submit
 
 		enum class Reason : uint8_t
 		{
-			PipBoy, Inactive, Shader, VertexShader, Layout, Dynamic, Blend, RtxConf, Texture, Budget, Build, Retry,
-			Submit, Count
+			PipBoy, Inactive, LightCard, Shader, VertexShader, Layout, Dynamic, Blend, RtxConf, Texture, Budget, Build,
+			Retry, Submit, Count
 		};
 		constexpr const char* kReasonNames[] = {
-			"pipboy", "inactive", "shader", "vs", "layout", "dynamic", "blend", "rtxconf", "texture", "budget", "build",
-			"retry", "submit",
+			"pipboy", "inactive", "lightCard", "shader", "vs", "layout", "dynamic", "blend", "rtxconf", "texture",
+			"budget", "build", "retry", "submit",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -624,6 +624,8 @@ namespace comp::game::api_submit
 		auto* b = bridge();
 		const float* w = world_matrix();
 		if (!b || !w) return refuse(Reason::Inactive);
+		// A light card (scene_statics::light_card) is not drawn.
+		if (scene_statics::light_card(dev)) return refuse(Reason::LightCard);
 		if (!psmap || !psmap->has(PsSlotRole::Diffuse)) return refuse(Reason::Shader);
 		// A vertex-expander family the expander declined (its declaration
 		// lacks what the expansion reads): its positions need the expansion.

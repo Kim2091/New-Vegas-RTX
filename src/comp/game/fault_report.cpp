@@ -93,6 +93,22 @@ namespace comp::game::fault_report
 		// The zip to upload, as rtx.faultNotice.uploadFile; empty until known.
 		std::string g_upload_file;
 
+		// Tells the player how to start the game with xNVSE, from its own thread so the game keeps running.
+		DWORD WINAPI xnvse_missing_box(LPVOID)
+		{
+			MessageBoxW(nullptr,
+				L"xNVSE is not running, so New Vegas RTX and most other mods cannot work, and the game can crash or render "
+				L"wrongly.\n\n"
+				L"Close the game and start it with xNVSE:\n"
+				L"- Manual install: run nvse_loader.exe in the game folder.\n"
+				L"- Vortex: start \"New Vegas Script Extender\" on the dashboard.\n"
+				L"- Mod Organizer 2: choose \"NVSE\" in the drop-down list next to Run, then click Run.\n\n"
+				L"Or apply the FNV 4GB Patcher to FalloutNV.exe. Then FalloutNV.exe loads xNVSE by itself "
+				L"(xNVSE 6.4.8 or newer).",
+				L"New Vegas RTX", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+			return 0;
+		}
+
 		bool reported(Fault f)
 		{
 			std::lock_guard lock(g_mutex);
@@ -224,15 +240,20 @@ namespace comp::game::fault_report
 		const size_t i = static_cast<size_t>(fault);
 		std::string clean = detail;
 		std::replace_if(clean.begin(), clean.end(), [](char c) { return c == '\n' || c == '\r' || c == '|'; }, ' ');
+		bool first = false;
 		{
 			std::lock_guard lock(g_mutex);
 			if (g_reported[i] && (clean.empty() || g_details[i].find(clean) != std::string::npos)) return;
 			if (!clean.empty()) g_details[i] += (g_details[i].empty() ? "" : "; ") + clean;
+			first = !g_reported[i];
 			g_reported[i] = true;
 			g_dirty = true;
 		}
 		shared::common::log_event("Problem", std::format("{}{}{}", kKinds[i].text, clean.empty() ? "" : " ", clean),
 			shared::common::LOG_TYPE::LOG_TYPE_WARN);
+		// A missing xNVSE also gets a message box, since the notice only shows once the renderer is up.
+		if (first && fault == Fault::XnvseMissing)
+			if (const auto t = CreateThread(nullptr, 0, xnvse_missing_box, nullptr, 0, nullptr); t) CloseHandle(t);
 	}
 
 	const char* check_module(const char* file, const char* product)

@@ -36,8 +36,9 @@
 // (call_chain.hpp).
 //
 // The screen's blood splatter is drawn after the world's image-space work, just
-// before the boundary, with a perspective camera of its own (passes 0x2F0 and
-// 0x2F1): it counts as UI too.
+// before the boundary, with a perspective camera of its own (pass 0x2F1): it
+// counts as UI too. Its flare (pass 0x2F0, a glow card the game places towards
+// bright lights) stays a world draw, so the injection overwrites it.
 //
 // In a frame that rendered the world, every draw from the boundary to Present
 // is UI: the wrapper triggers the injection at the first one that targets the
