@@ -18,6 +18,11 @@ namespace fnvr::lights
 			uint8_t kind = FNVR_LK_EFFECT;
 			uint32_t listed_scan = 0;     // the scan that last found it in an engine list
 			uint64_t key = 0;             // FnvRemixLight::asset_key
+			uintptr_t ligh = 0;           // placed: the reference's base LIGH (its flags say whether it is animated)
+			uint8_t anim = 0;             // FnvRemixLightAnim seen so far: sticky, nothing gives the floats back
+			uint8_t atten_changes = 0;    // effect lights without a LIGH: changes of the attenuation floats
+			bool atten_seen = false;
+			float last_atten[3] = {};
 		};
 
 		std::unordered_map<uintptr_t, Light> g_lights;                      // NiLight -> entry
@@ -92,6 +97,56 @@ namespace fnvr::lights
 			}
 			h = mix_key(h, ordinal);
 			return h ? h : 1;
+		}
+
+		uintptr_t as_ligh(uintptr_t form)   // a live LIGH, else 0
+		{
+			uint32_t vtbl = 0; uint8_t type = 0;
+			return guard::plausible(form) && guard::get(form, vtbl) && guard::in_image(vtbl) &&
+				guard::get(form + engine::FORM_type, type) && type == engine::kFormType_LIGH ? form : 0;
+		}
+
+		uintptr_t base_ligh(uintptr_t ref)
+		{
+			uint32_t base = 0;
+			return guard::get(ref + engine::REFR_baseForm, base) ? as_ligh(base) : 0;
+		}
+
+		uint8_t animation(Light& l, uint32_t av_flags, uint32_t jip_form, const float (&atten)[3], float radius)
+		{
+			uint8_t now = 0;
+			uintptr_t ligh = l.ligh;
+			if (!ligh && l.kind == FNVR_LK_EFFECT && (av_flags & engine::kAvFlag_JipLight))
+			{
+				ligh = as_ligh(jip_form);
+				if (ligh) now |= FNVR_LA_JIP;
+			}
+			uint32_t lf = 0;
+			if (ligh && guard::get(ligh + engine::LIGH_flags, lf))   // read each frame: JIP SetLightFlag can change it
+			{
+				if (lf & engine::kLighFlags_AttenState) now |= FNVR_LA_ATTEN;
+				if (lf & engine::kLighFlags_JipAnimated) now |= FNVR_LA_AMBIENT;
+			}
+			else if (l.kind == FNVR_LK_EFFECT)
+			{
+				// No LIGH to ask. After the engine makes a light only an animation writes these floats again: every
+				// frame (the engine's) or every cycle (JIP's). A light made again for another use changes them once.
+				if (l.atten_seen && std::memcmp(l.last_atten, atten, sizeof(atten)) != 0 && l.atten_changes < 255) l.atten_changes++;
+				l.atten_seen = true;
+				std::memcpy(l.last_atten, atten, sizeof(atten));
+				if (l.atten_changes >= 2) now |= FNVR_LA_ATTEN | FNVR_LA_AMBIENT | FNVR_LA_GUESS;
+			}
+			if ((now & FNVR_LA_ATTEN) && !(l.anim & FNVR_LA_ATTEN))
+			{
+				uint32_t id = 0;
+				if (ligh) guard::get(ligh + engine::FORM_refID, id);
+				log::f("LightReg", "animated light 0x{:X} ({}, reference 0x{:X}, LIGH {:08X} flags 0x{:X}) radius {:.0f}: its attenuation "
+					"floats ({:g}, {:g}, {:g}) hold the animation's state, not its attenuation", l.light,
+					l.kind == FNVR_LK_PLACED ? "placed" : (now & FNVR_LA_JIP) ? "JIP light" : "effect light, the floats changed",
+					l.owner, id, lf, radius, atten[0], atten[1], atten[2]);
+			}
+			l.anim |= now;
+			return l.anim;
 		}
 
 		uintptr_t tag_of(const Light& l)
@@ -201,7 +256,7 @@ namespace fnvr::lights
 				engine::PC_effectList, engine::LE_light);
 		}
 
-		bool fill(const Light& l, FnvRemixLight& o)
+		bool fill(Light& l, FnvRemixLight& o)
 		{
 			// NiAVObject world position .. NiLight attenuation, one read.
 			float block[(engine::LIGHT_atten + 12 - engine::AV_worldPos) / 4] = {};
@@ -222,6 +277,9 @@ namespace fnvr::lights
 			}
 			o.dimmer = at(engine::LIGHT_dimmer);
 			o.radius = at(engine::LIGHT_radius);
+			uint32_t jip_form = 0;
+			std::memcpy(&jip_form, &block[(engine::LIGHT_jipForm - engine::AV_worldPos) / 4], sizeof(jip_form));
+			o.anim = animation(l, flags, jip_form, o.atten, o.radius);
 			o.kind = l.kind;
 			o.asset_key = l.key;
 			o.listed_by_engine = l.listed_scan == g_scan ? 1 : 0;
@@ -253,6 +311,7 @@ namespace fnvr::lights
 
 	void set_placed(uintptr_t ref, const std::vector<uintptr_t>& found)
 	{
+		const uintptr_t ligh = base_ligh(ref);
 		auto& mine = g_by_ref[ref];
 		// Gone from its 3D since the last walk.
 		for (const uintptr_t l : mine)
@@ -266,6 +325,7 @@ namespace fnvr::lights
 			{
 				if (it->second.kind == FNVR_LK_PLACED && it->second.owner == ref)
 				{
+					it->second.ligh = ligh;
 					now.push_back(l);
 					continue;
 				}
@@ -278,6 +338,7 @@ namespace fnvr::lights
 			e.owner = ref;
 			e.kind = FNVR_LK_PLACED;
 			e.key = placed_key(ref, ordinal);
+			e.ligh = ligh;
 			g_lights.emplace(l, e);
 			now.push_back(l);
 			g_placed_added++;
@@ -349,7 +410,7 @@ namespace fnvr::lights
 		scan();
 		update_player();
 		uint32_t n = 0;
-		auto put = [&](const Light& l) {
+		auto put = [&](Light& l) {
 			// An effect light only the plugin's pin holds is one the engine let
 			// go of since the last main loop: not sent while its release waits.
 			if (l.kind == FNVR_LK_EFFECT && pins::refcount(l.light) <= 1) return;
@@ -357,9 +418,9 @@ namespace fnvr::lights
 		};
 		if (g_player)
 			if (const auto it = g_lights.find(g_player); it != g_lights.end()) put(it->second);
-		for (const auto& [light, l] : g_lights)
+		for (auto& [light, l] : g_lights)
 			if (l.kind != FNVR_LK_PLAYER && l.listed_scan == g_scan) put(l);
-		for (const auto& [light, l] : g_lights)
+		for (auto& [light, l] : g_lights)
 			if (l.kind != FNVR_LK_PLAYER && l.listed_scan != g_scan) put(l);
 		return n;
 	}

@@ -140,13 +140,25 @@ struct FnvRemixMember { uintptr_t geo, ref; };
 
 enum FnvRemixLightKind : uint8_t { FNVR_LK_PLACED, FNVR_LK_EFFECT, FNVR_LK_PLAYER };
 
+// FnvRemixLight::anim. The engine's light animation keeps its state in the light's own floats: the
+// engine's flicker (0x50DE60) three phases in the attenuation (NiPointLight +0xF0..+0xF8); JIP LN NVSE's
+// DoUpdateAnimatedLight (jumped to from 0x50DE20 for every LIGH with a flag in 0x19C8) its cycle's position
+// or colour step there, and a timer and steps in the ambient colour (+0xC8..+0xD0). 0: the floats are the light's.
+enum FnvRemixLightAnim : uint8_t
+{
+	FNVR_LA_ATTEN   = 1u << 0,  // attenuation floats are animation state (LIGH 0x08, 0x40; JIP 0x800, 0x1000)
+	FNVR_LA_AMBIENT = 1u << 1,  // ambient floats may be (a LIGH flag JIP animates, 0x19C8)
+	FNVR_LA_JIP     = 1u << 2,  // a JIP light (its LIGH at +0xE8): JIP set its attenuation to (0, 0, 0)
+	FNVR_LA_GUESS   = 1u << 3,  // no LIGH known: ATTEN because the floats changed twice since the first copy
+};
+
 struct FnvRemixLight
 {
 	uintptr_t id;                   // the NiLight, pinned while listed: never reused for another light
 	uintptr_t owner_ref;            // 0 if none
 	float pos[3], diffuse[3], ambient[3];
 	float dimmer, radius, atten[3];
-	uint8_t kind, lit, listed_by_engine, pad;
+	uint8_t kind, lit, listed_by_engine, anim;   // FnvRemixLightAnim (was a zero pad: older plugins send 0)
 	// The light's name for Remix mods and captures, the same in every session
 	// (placed: its reference and base form, the reference's position and the
 	// light's place in its 3D; the player's light: a constant). 0: none (effect lights).
