@@ -23,8 +23,9 @@
 //   * log_line() is the one call any thread may make;
 //   * FnvRemix_GetApi(abi) returns null for any ABI but FNV_REMIX_ABI.
 
-// Bumped on any change to this file. Plugin and wrapper are built from one
-// commit; a different value means a mixed install.
+// Bumped when the layout changes, or a field's meaning changes in a way an
+// older build would misread (a reused zero pad is not). Plugin and wrapper are
+// built from one commit; a different value means a mixed install.
 #define FNV_REMIX_ABI 8u
 
 enum FnvRemixFeature : uint32_t

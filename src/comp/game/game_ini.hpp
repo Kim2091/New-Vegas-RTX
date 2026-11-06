@@ -24,7 +24,9 @@ namespace comp::game::game_ini
 	// the game patches.
 	void install_hook();
 
-	// The raw 32-bit values (b: low byte; f: float bits; i, u: integer) of the named Settings ("fQuadraticValue:bLightAttenuation"),
-	// from both collections in one walk. True when the executable is known and every name was found exactly once.
+	// The raw 32-bit values of the named Settings ("name:Section", as
+	// "fQuadraticValue:bLightAttenuation"; b: low byte, f: float bits, i and
+	// u: integer), from both collections in one call. True when the
+	// executable is known and every name was found exactly once.
 	bool read_raw(const char* const* names, size_t count, uint32_t* out);
 }

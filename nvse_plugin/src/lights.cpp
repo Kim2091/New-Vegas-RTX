@@ -115,35 +115,42 @@ namespace fnvr::lights
 		uint8_t animation(Light& l, uint32_t av_flags, uint32_t jip_form, const float (&atten)[3], float radius)
 		{
 			uint8_t now = 0;
-			uintptr_t ligh = l.ligh;
-			if (!ligh && l.kind == FNVR_LK_EFFECT && (av_flags & engine::kAvFlag_JipLight))
+			// A JIP light: one of JIP's own, or a placed light JIP's AttachLight took over (CreatePointLight reuses
+			// a point light that is a child of the node). JIP animates it by that LIGH's flags, and the engine
+			// animates a placed light by its base LIGH's flags as well.
+			const uintptr_t jip = (av_flags & engine::kAvFlag_JipLight) ? as_ligh(jip_form) : 0;
+			if (jip) now |= FNVR_LA_JIP;
+			uint32_t lf = 0, jf = 0;   // read each frame: JIP SetLightFlag can change them
+			const bool have_lf = l.ligh && guard::get(l.ligh + engine::LIGH_flags, lf);
+			const bool have_jf = jip && guard::get(jip + engine::LIGH_flags, jf);
+			if (have_lf || have_jf)
 			{
-				ligh = as_ligh(jip_form);
-				if (ligh) now |= FNVR_LA_JIP;
-			}
-			uint32_t lf = 0;
-			if (ligh && guard::get(ligh + engine::LIGH_flags, lf))   // read each frame: JIP SetLightFlag can change it
-			{
-				if (lf & engine::kLighFlags_AttenState) now |= FNVR_LA_ATTEN;
-				if (lf & engine::kLighFlags_JipAnimated) now |= FNVR_LA_AMBIENT;
+				if ((lf | jf) & engine::kLighFlags_AttenState) now |= FNVR_LA_ATTEN;
+				if ((lf | jf) & engine::kLighFlags_JipAnimated) now |= FNVR_LA_AMBIENT;
 			}
 			else if (l.kind == FNVR_LK_EFFECT)
 			{
 				// No LIGH to ask. After the engine makes a light only an animation writes these floats again: every
 				// frame (the engine's) or every cycle (JIP's). A light made again for another use changes them once.
-				if (l.atten_seen && std::memcmp(l.last_atten, atten, sizeof(atten)) != 0 && l.atten_changes < 255) l.atten_changes++;
+				if (l.atten_seen && std::memcmp(l.last_atten, atten, sizeof(atten)) != 0 && l.atten_changes < 255)
+					l.atten_changes++;
 				l.atten_seen = true;
 				std::memcpy(l.last_atten, atten, sizeof(atten));
 				if (l.atten_changes >= 2) now |= FNVR_LA_ATTEN | FNVR_LA_AMBIENT | FNVR_LA_GUESS;
 			}
 			if ((now & FNVR_LA_ATTEN) && !(l.anim & FNVR_LA_ATTEN))
 			{
-				uint32_t id = 0;
-				if (ligh) guard::get(ligh + engine::FORM_refID, id);
-				log::f("LightReg", "animated light 0x{:X} ({}, reference 0x{:X}, LIGH {:08X} flags 0x{:X}) radius {:.0f}: its attenuation "
-					"floats ({:g}, {:g}, {:g}) hold the animation's state, not its attenuation", l.light,
-					l.kind == FNVR_LK_PLACED ? "placed" : (now & FNVR_LA_JIP) ? "JIP light" : "effect light, the floats changed",
-					l.owner, id, lf, radius, atten[0], atten[1], atten[2]);
+				// The base LIGH, else JIP's; a placed light JIP took over names both.
+				uint32_t id = 0, jip_id = 0;
+				if (l.ligh) guard::get(l.ligh + engine::FORM_refID, id);
+				if (jip) guard::get(jip + engine::FORM_refID, jip_id);
+				const std::string also = l.ligh && jip && jip != l.ligh
+					? std::format(", JIP's LIGH {:08X} flags 0x{:X}", jip_id, jf) : std::string();
+				log::f("LightReg", "animated light 0x{:X} ({}, reference 0x{:X}, LIGH {:08X} flags 0x{:X}{}) radius {:.0f}: "
+					"its attenuation floats ({:g}, {:g}, {:g}) hold the animation's state, not its attenuation", l.light,
+					l.kind == FNVR_LK_PLACED ? (jip ? "placed, JIP light" : "placed")
+						: jip ? "JIP light" : "effect light, the floats changed",
+					l.owner, l.ligh ? id : jip_id, l.ligh ? lf : jf, also, radius, atten[0], atten[1], atten[2]);
 			}
 			l.anim |= now;
 			return l.anim;
@@ -311,7 +318,7 @@ namespace fnvr::lights
 
 	void set_placed(uintptr_t ref, const std::vector<uintptr_t>& found)
 	{
-		const uintptr_t ligh = base_ligh(ref);
+		const uintptr_t ligh = found.empty() ? 0 : base_ligh(ref);
 		auto& mine = g_by_ref[ref];
 		// Gone from its 3D since the last walk.
 		for (const uintptr_t l : mine)
