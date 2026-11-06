@@ -53,7 +53,8 @@
  *                      kGrassBuildsPerFrame for grass; an in-place grass
  *                      update takes kGrassBuildsPerFrame only) is spent;
  *   * a retry pending after a failed build.
- * (With no copy yet, those draws are not drawn this frame.)
+ * (With no copy yet, a churn-held batch or slot builds its copy anyway; over
+ * the budget or with a retry pending the draw is not drawn this frame.)
  *
  * Grass identity: one batch = one NiGeometry
  * ------------------------------------------
@@ -71,9 +72,14 @@
  * NiGeometry is refused (unlinked): no identity is guessed.
  *
  * A part holds one mesh at a time. The same batch drawn with a new instance
- * set (a new expansion key) is a new generation: the new mesh is built (within
- * the build budget; over it the batch draws its current copy this frame) and
- * the part's old mesh and instance are destroyed. Supersession never crosses
+ * set (a new expansion key) is a new generation. When the part's mesh is the
+ * instanced model with the same material, the new transforms are applied in
+ * place (the mesh and its retained instance stay). A new key while the batch's
+ * generation (scene_graph::grass_generation) is unchanged is float noise in
+ * the constants: the mesh only takes the key, and is expanded again at least
+ * every kGrassRekeyRefresh frames. Otherwise the new mesh is built (within the
+ * build budget; over it the batch draws its current copy this frame) and the
+ * part's old mesh and instance are destroyed. Supersession never crosses
  * batches.
  * The grass batch hooks (scene_graph: append 0xBD8550, remove 0xBD85B0,
  * destroy 0xBD8F90) report changes the draws can't see: a batch whose
@@ -161,6 +167,8 @@ namespace comp::game::api_submit
 		// make_template: one copy may lack up to this many of the template's
 		// triangles (a full batch's last copy ends its strip short).
 		constexpr size_t kShortCopyTris = 2;
+		// A batch that only took new keys (float noise) is expanded again at least this often.
+		constexpr UINT kGrassRekeyRefresh = 300;
 
 		enum class Reason : uint8_t
 		{
@@ -286,6 +294,7 @@ namespace comp::game::api_submit
 			// When its instance set was last built (new mesh or in place): the
 			// engine's generation of the batch and the draw's identity.
 			uint64_t built_gen = 0, built_draw = 0;
+			UINT built_frame = 0;
 			bool built_valid = false;
 		};
 		std::unordered_map<uint64_t, Part> g_parts;
@@ -533,6 +542,10 @@ namespace comp::game::api_submit
 			const UINT lo = static_cast<UINT>(in.tc1_off), hi = lo + static_cast<UINT>(in.tc1_size);
 			xforms.clear();
 			bool short_copy = false;
+			// The last copy the draw's indices reach.
+			int last_drawn = -1;
+			for (size_t s = n; s-- > 0;)
+				if (!tris[s].empty()) { last_drawn = static_cast<int>(s); break; }
 			for (size_t s = 0; s < n; s++)
 			{
 				if (tris[s].empty()) continue;
@@ -541,10 +554,12 @@ namespace comp::game::api_submit
 				xforms.push_back(xf);
 				if (static_cast<int>(s) == t) continue;
 				if (copy[s].size() != ref.size()) { why = "instances differ (vertex count)"; return false; }
-				// A full batch's last copy ends its strip short (11856 vertices,
-				// 228 copies: copy 227 has 40 of the model's 42 triangles). It
-				// is drawn as the whole model.
-				if (!short_copy && tris[s].size() < tris[t].size() && tris[t].size() - tris[s].size() <= kShortCopyTris &&
+				// A full grass batch's last copy ends its strip short (11856
+				// vertices, 228 copies: copy 227 has 40 of the model's 42
+				// triangles). Only that copy, only grass; it is drawn as the
+				// whole model.
+				if (!short_copy && vs.family == VsFamily::Grass && static_cast<int>(s) == last_drawn &&
+					tris[s].size() < tris[t].size() && tris[t].size() - tris[s].size() <= kShortCopyTris &&
 					std::includes(tris[t].begin(), tris[t].end(), tris[s].begin(), tris[s].end()))
 					short_copy = true;
 				else if (tris[s] != tris[t])
@@ -1115,6 +1130,8 @@ namespace comp::game::api_submit
 		}
 		if (mit == g_materials.end())
 		{
+			// A churn-held grass batch builds nothing new, a material included.
+			if (grass_held) return stale(Reason::Churn);
 			if (!take_build_budget(mkey))
 			{
 				if (!leaf) g_count.budget_holds++;
@@ -1185,12 +1202,15 @@ namespace comp::game::api_submit
 				dh.mix(mkey);
 				draw_id = dh.get();
 			}
+			// The batch's generation before the expansion reads its constants: a change a hook reports while this draw is
+			// built makes the next draw expand again instead of taking its key.
+			const uint64_t gen_now = part ? sg::grass_generation(geo) : 0;
 			// The same draw of a batch the engine has not changed since its instance set was built: the new key is float
 			// noise in the instance constants, which the engine re-derives every frame (with the player standing still,
 			// some batches got a new key every frame and were expanded again each time). The batch keeps its mesh, its
 			// instance and its transforms and only takes the key: no expansion, no budget, nothing re-sent.
 			if (in_place_likely && part->built_valid && part->built_draw == draw_id && sg::grass_hooks_installed() &&
-				part->built_gen == sg::grass_generation(geo))
+				part->built_gen == gen_now && now - part->built_frame < kGrassRekeyRefresh)
 			{
 				auto node = g_meshes.extract(part->mesh_key);
 				node.key() = key;
@@ -1263,8 +1283,10 @@ namespace comp::game::api_submit
 				mesh_it = g_meshes.insert(std::move(node)).position;
 				part->mesh_key = key;
 				part->generations++;
-				part->built_gen = sg::grass_generation(geo);
+				part->held_key = 0;
+				part->built_gen = gen_now;
 				part->built_draw = draw_id;
+				part->built_frame = now;
 				part->built_valid = true;
 				return claim(mesh_it->second);
 			}
@@ -1291,8 +1313,10 @@ namespace comp::game::api_submit
 				}
 				part->mesh_key = key;
 				part->generations++;
-				part->built_gen = sg::grass_generation(geo);
+				part->held_key = 0;
+				part->built_gen = gen_now;
 				part->built_draw = draw_id;
+				part->built_frame = now;
 				part->built_valid = true;
 			}
 			// Leaves: the slot's previous mesh at this placement is replaced
@@ -1567,13 +1591,16 @@ namespace comp::game::api_submit
 		}
 		const UINT now = frame();
 		uint32_t held = 0;
-		for (const auto& [k, sl] : g_slots) held += now < sl.hold_until ? 1u : 0u;
+		// In a hold with a copy to draw (one without a copy builds it).
+		auto drawn = [&](uint64_t mesh_key) { const auto it = mesh_key ? g_meshes.find(mesh_key) : g_meshes.end();
+			return it != g_meshes.end() && it->second.e.mesh; };
+		for (const auto& [k, sl] : g_slots) held += (now < sl.hold_until && drawn(sl.mesh_key)) ? 1u : 0u;
 		uint64_t gens = 0;
 		uint32_t batches_held = 0, multi_gen = 0;
 		for (const auto& [k, p] : g_parts)
 		{
 			gens += p.generations;
-			batches_held += now < p.hold_until ? 1u : 0u;
+			batches_held += (now < p.hold_until && drawn(p.mesh_key)) ? 1u : 0u;
 			multi_gen += p.generations > 1 ? 1u : 0u;
 		}
 		const auto hs = sg::grass_hook_stats();
