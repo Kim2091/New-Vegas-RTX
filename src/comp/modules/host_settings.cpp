@@ -759,6 +759,13 @@ namespace comp::host_settings
 			add_int(V, "VATS", "SampleCount", "Rays per limb", L, &c.vats.sample_count, 7, 1, 16, 1,
 				"One ray to the limb, the rest spread on the ring. Visibility is the share that is not blocked.");
 
+			// ---- [StealthField] ----
+			const char* SF = "Stealth field";
+			add_bool(SF, "StealthField", "Enabled", "Stealth field as glass", L, &c.stealth_field.enabled, true,
+				"Actors under a Stealth Boy or another Chameleon / Invisibility effect go out as glass. Off = they stay solid.");
+			add_float(SF, "StealthField", "Ior", "Glass IOR", B, &c.stealth_field.ior, 1.12f, 1.0f, 3.0f, 0.005,
+				"Index of refraction of the glass: higher bends the background more.");
+
 			// ---- [Lights] ----
 			const char* Li = "Lights";
 			add_bool(Li, "Lights", "Enabled", "Point lights", L, &c.lights.enabled, true,

@@ -4,6 +4,7 @@
 #include "api_identity.hpp"
 #include "api_rtxconf.hpp"
 #include "scene_graph.hpp"
+#include "stealth_field.hpp"
 
 #include "shared/common/config.hpp"
 #include "shared/common/ffp_state.hpp"
@@ -20,6 +21,7 @@ namespace comp::game::api::material
 		m.blend = false;
 		return true;
 	}
+
 
 	uint64_t key(const Desc& m)
 	{
@@ -45,6 +47,7 @@ namespace comp::game::api::material
 		h.add(m.albedo_tint, sizeof(m.albedo_tint));
 		h.pod(m.emissive_intensity);
 		if (m.hair_bake) h.mix(m.hair_bake);
+		if (m.stealth) h.mix(0x5354454C5448ull);   // "STEALTH"
 		return h.get();
 	}
 
@@ -788,6 +791,21 @@ namespace comp::game::api::material
 				m.alpha_dropped = l->drop_alpha;
 			}
 		m.no_vertex_color = md.plain || rc.ignore_all_vertex_color || (hashed && rtxconf::ignores_baked_lighting(d3d9));
+
+		if (md.stealth)
+		{
+			// No albedo and an object hash of its own: nothing of the opaque
+			// material or its replacement shows through.
+			remixapi_MaterialInfoTranslucentEXT tr;
+			stealth_field::fill_glass(tr);
+			remixapi_MaterialInfo mi;
+			init_material_info(mi, next_object_hash(key, domain), &tr);
+			m.no_vertex_color = true;
+			m.alpha_dropped = true;
+			m.handle = create_material(mi);
+			if (!m.handle) return decline(Decline::Build);
+			return;
+		}
 
 		const char* reject = nullptr;
 		auto take = [&](IDirect3DBaseTexture9* t, textures::Flavor f) -> uint64_t {

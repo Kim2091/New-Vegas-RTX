@@ -9,6 +9,7 @@
 #include "scene_graph.hpp"
 #include "scene_statics.hpp"
 #include "stable_origin.hpp"
+#include "stealth_field.hpp"
 #include "nvse_link.hpp"
 #include "tex_pack.hpp"
 
@@ -786,6 +787,13 @@ namespace comp::game::api_submit
 			md.alpha_ref = static_cast<uint8_t>(rs(dev, D3DRS_ALPHAREF, 0) & 0xFF);
 		}
 		material::blend_test_as_cutout(md);
+		// A rigid part of an actor under a stealth field (weapon, hat): glass.
+		if (stealth_field::covers(engine_geo))
+		{
+			md.stealth = true;
+			md.blend = false;
+			md.alpha_func = md.alpha_ref = 0;
+		}
 
 		const uint64_t mkey = material::key(md);
 		auto mit = g_mats.find(mkey);

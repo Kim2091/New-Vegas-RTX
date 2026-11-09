@@ -10,6 +10,7 @@
 #include "api_hair_bake.hpp"
 #include "scene_graph.hpp"
 #include "stable_origin.hpp"
+#include "stealth_field.hpp"
 
 #include "shared/common/ffp_state.hpp"
 #include "shared/common/ps_reflect.hpp"
@@ -212,12 +213,13 @@ namespace comp::game::api_submit
 			Palette,     // the mesh uses a slot the captured palette lacks
 			Bones,       // non-finite bone
 			Submit,      // DrawInstance failed
+			StealthHair, // hair under a stealth field: only its alpha makes it strands, which glass has none of
 			Count
 		};
 
 		constexpr const char* kReasonNames[] = {
 			"bridge", "inactive", "nobones", "shader", "layout", "blend", "alphafunc", "colorwrite", "streamed",
-			"rtxconf", "texture", "budget", "build", "retry", "palette", "bones", "submit",
+			"rtxconf", "texture", "budget", "build", "retry", "palette", "bones", "submit", "stealthhair",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -884,6 +886,16 @@ namespace comp::game::api_submit
 					md.alpha_ref = static_cast<uint8_t>(render_state(dev, D3DRS_ALPHAREF, 0) & 0xFF);
 				}
 				else if (func != D3DCMP_ALWAYS) return refused(Reason::AlphaFunc);
+			}
+
+			// A stealth field: glass, with no alpha state of its own.
+			if (stealth_field::covers(scene_graph::current_geometry()))
+			{
+				if (psmap->hair_tint_reg != PsSlotMap::kNoReg) return refused(Reason::StealthHair);
+				md.stealth = true;
+				md.blend = false;
+				md.alpha_func = md.alpha_ref = 0;
+				decal = false;
 			}
 
 			// Buffers.

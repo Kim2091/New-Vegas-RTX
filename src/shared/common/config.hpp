@@ -540,6 +540,14 @@ namespace shared::common
 			int sample_count = 7;
 		} vats;
 
+		// [StealthField]: actors under a stealth field go out as glass (game/stealth_field.*).
+		struct stealth_field_settings
+		{
+			bool enabled = true;
+			// Index of refraction of the glass: higher bends the background more.
+			float ior = 1.12f;
+		} stealth_field;
+
 		// [SaveScreenshots]: the picture a save stores (game/save_thumbnail.*).
 		struct save_screenshot_settings
 		{

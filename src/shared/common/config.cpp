@@ -251,6 +251,10 @@ namespace shared::common
 		vats.sample_radius = std::clamp(get_float("VATS", "SampleRadius", 10.0f), 0.0f, 100.0f);
 		vats.sample_count = std::clamp(get_int("VATS", "SampleCount", 7), 1, 16);
 
+		// [StealthField]
+		stealth_field.enabled = get_bool("StealthField", "Enabled", true);
+		stealth_field.ior = std::clamp(get_float("StealthField", "Ior", 1.12f), 1.0f, 3.0f);
+
 		// [SaveScreenshots]
 		save_screenshots.enabled = get_bool("SaveScreenshots", "Enabled", true);
 		save_screenshots.refresh_ms = std::clamp(get_int("SaveScreenshots", "RefreshMs", 1500), 250, 60000);
@@ -327,6 +331,7 @@ namespace shared::common
 		log("Config", std::format("Hair: Brightness={:.2f}", hair.brightness));
 		log("Config", std::format("VATS: Enabled={} SampleRadius={:.1f} SampleCount={}",
 			vats.enabled ? 1 : 0, vats.sample_radius, vats.sample_count));
+		log("Config", std::format("StealthField: Enabled={} Ior={:.3f}", stealth_field.enabled ? 1 : 0, stealth_field.ior));
 		log("Config", std::format("SaveScreenshots: Enabled={} RefreshMs={}", save_screenshots.enabled ? 1 : 0,
 			save_screenshots.refresh_ms));
 		log("Config", std::format("ScreenSpace: HideScreenSpaceDraws={} ScreenSpaceLog={}",
