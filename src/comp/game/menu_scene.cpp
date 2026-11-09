@@ -26,6 +26,8 @@ namespace comp::game::menu_scene
 
 		bool g_drawn = false;
 		UINT g_raster_frame = 0xFFFFFFFFu;
+		UINT g_world_frame = 0xFFFFFFFFu;  // a frame that drew world geometry while the facts said frozen menu
+		uint32_t g_world_overrides = 0;
 		uint32_t g_raster_frames = 0, g_trigger_failures = 0;
 		bool g_logged_raster = false;
 		bool g_hooks_asked = false;
@@ -130,7 +132,21 @@ namespace comp::game::menu_scene
 		const UINT now = shared::common::ffp_state::get().frame_count();
 		if (g_raster_frame == now || !dev) return;
 		if (!pipboy_closed()) return;
-		if (!menu_draw && !menu_bg::frozen_menu() && !ui_boundary::no_world_ui_draw()) return;
+		if (!menu_draw && !ui_boundary::no_world_ui_draw())
+		{
+			if (!menu_bg::frozen_menu()) return;
+			// In the frames right after a menu closes the facts and the captured
+			// flag still say menu while the engine already renders the world. A
+			// world geometry draw shows the frame is not over the frozen
+			// background, so it is path traced.
+			if (g_world_frame == now) return;
+			if (!game::is_2d() && sg::current_geometry() && world_camera_drawing())
+			{
+				g_world_frame = now;
+				++g_world_overrides;
+				return;
+			}
+		}
 		// The runtime only injects at a draw to a primary-sized target.
 		if (!game::rendering_to_backbuffer) return;
 		if (!ui_boundary::trigger_injection(dev))
@@ -162,14 +178,15 @@ namespace comp::game::menu_scene
 		// A geometry address can be reused by the next frame's objects.
 		g_last_geo = 0;
 		if (++g_window < kLogWindow) return;
-		if (g_draws || g_no_geometry || g_raster_frames)
+		if (g_draws || g_no_geometry || g_raster_frames || g_world_overrides)
 			shared::common::log("MenuScene", std::format("last {} frames: menu 3D scene draws {} in {} frames; frames "
-				"rasterised with no path tracing {} (injection trigger failures {}); draws outside the world camera with "
-				"no engine geometry to test {}{}", g_window, g_draws, g_frames, g_raster_frames, g_trigger_failures,
+				"rasterised with no path tracing {} (injection trigger failures {}); frames path traced because they drew "
+				"the world while the facts said frozen menu {}; draws outside the world camera with no engine geometry to "
+				"test {}{}", g_window, g_draws, g_frames, g_raster_frames, g_trigger_failures, g_world_overrides,
 				g_no_geometry, sg::hooks_installed() ? "" : " (render-pass dispatcher hook not installed)"),
 				shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 		g_window = 0;
 		g_draws = g_frames = g_no_geometry = 0;
-		g_raster_frames = g_trigger_failures = 0;
+		g_raster_frames = g_trigger_failures = g_world_overrides = 0;
 	}
 }

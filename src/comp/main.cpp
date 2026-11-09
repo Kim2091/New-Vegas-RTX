@@ -54,14 +54,24 @@ namespace comp
 		return TRUE;
 	}
 
-	// The host process is FalloutNVLauncher.exe, the game's launcher.
-	bool is_launcher_process()
+	// The host process is the game: an executable named FalloutNV.exe, or one
+	// with the PE timestamp of the supported 1.4.0.525 build (a renamed copy).
+	// The launcher, the GECK and any other program that loads d3d9.dll from
+	// the game folder are not.
+	bool is_game_process()
 	{
 		wchar_t path[MAX_PATH] = {};
 		const DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
-		if (!n || n >= MAX_PATH) return false;
-		const wchar_t* slash = wcsrchr(path, L'\\');
-		return _wcsicmp(slash ? slash + 1 : path, L"FalloutNVLauncher.exe") == 0;
+		if (n && n < MAX_PATH)
+		{
+			const wchar_t* slash = wcsrchr(path, L'\\');
+			if (_wcsicmp(slash ? slash + 1 : path, L"FalloutNV.exe") == 0) return true;
+		}
+		const auto* image = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
+		const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+		if (!image || dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+		const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(image + dos->e_lfanew);
+		return nt->Signature == IMAGE_NT_SIGNATURE && nt->FileHeader.TimeDateStamp == 0x4E0D50ED;
 	}
 
 	// Without [Logging] Console=1 the process keeps no console window, whichever module opened it.
@@ -126,6 +136,8 @@ BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 {
 	if (ul_reason_for_call == DLL_PROCESS_DETACH)
 	{
+		// Outside the game nothing was started, and the session files are the game's.
+		if (!comp::is_game_process()) return TRUE;
 		comp::game::sampler::stop();
 		comp::game::session_log::on_exit();
 		comp::game::session_report::on_exit();
@@ -135,12 +147,12 @@ BOOL APIENTRY DllMain(HMODULE hmodule, const DWORD ul_reason_for_call, LPVOID)
 
 	if (ul_reason_for_call == DLL_PROCESS_ATTACH)
 	{
-		// The game's launcher loads d3d9.dll from the game folder too. It gets
-		// the system d3d9 and nothing else: no Remix bridge (whose server and
-		// runtime would start and replace their logs), no log file (opening
-		// one moves the last game session's log to remix-comp.prev.log) and no
-		// hooks.
-		if (comp::is_launcher_process())
+		// Other programs in the game folder (the launcher, the GECK) load
+		// d3d9.dll from it too. They get the system d3d9 and nothing else: no
+		// Remix bridge (whose server and runtime would start and replace their
+		// logs), no log file (opening one moves the last game session's log to
+		// remix-comp.prev.log) and no hooks.
+		if (!comp::is_game_process())
 		{
 			shared::common::log_disable();
 			d3d9_proxy::init_system();

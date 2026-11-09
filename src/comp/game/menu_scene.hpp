@@ -21,7 +21,10 @@
 // A frame over the engine's frozen menu background (menu_bg::frozen_menu), any
 // frame that draws a menu scene, and a frame that draws only the interface
 // (ui_boundary::no_world_ui_draw) is rasterised as the game draws it, with no
-// path tracing. The runtime commits every draw made before its RTX injection
+// path tracing. A frame that draws world geometry with the world camera is never
+// taken for a frozen menu frame: right after a menu closes, the facts still say
+// menu for a frame or two while the engine already renders the world.
+// The runtime commits every draw made before its RTX injection
 // (vertex capture keeps the raster too) and takes the Main camera from any of
 // them with a perspective projection (for these shader draws, the device's
 // last FFP transforms). The injection, at the first UI draw (the menu's 2D
