@@ -545,7 +545,7 @@ namespace shared::common
 		{
 			bool enabled = true;
 			// Index of refraction of the glass: higher bends the background more.
-			float ior = 1.12f;
+			float ior = 1.05f;
 		} stealth_field;
 
 		// [SaveScreenshots]: the picture a save stores (game/save_thumbnail.*).

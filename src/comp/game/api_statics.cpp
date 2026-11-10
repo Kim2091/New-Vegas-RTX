@@ -119,11 +119,11 @@ namespace comp::game::api_submit
 		enum class Reason : uint8_t
 		{
 			PipBoy, Inactive, LightCard, Shader, VertexShader, Layout, Dynamic, Blend, RtxConf, Texture, Budget, Build,
-			Retry, Submit, Count
+			Retry, Submit, Stealth, Count
 		};
 		constexpr const char* kReasonNames[] = {
 			"pipboy", "inactive", "lightCard", "shader", "vs", "layout", "dynamic", "blend", "rtxconf", "texture",
-			"budget", "build", "retry", "submit",
+			"budget", "build", "retry", "submit", "stealth",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -788,7 +788,10 @@ namespace comp::game::api_submit
 		}
 		material::blend_test_as_cutout(md);
 		// A rigid part of an actor under a stealth field (weapon, hat): glass.
-		if (stealth_field::covers(engine_geo))
+		// What sits inside the head isn't drawn.
+		const stealth_field::Part stealth = stealth_field::part(engine_geo);
+		if (stealth == stealth_field::Part::Hidden) return refuse(Reason::Stealth);
+		if (stealth == stealth_field::Part::Glass)
 		{
 			md.stealth = true;
 			md.blend = false;

@@ -214,12 +214,13 @@ namespace comp::game::api_submit
 			Bones,       // non-finite bone
 			Submit,      // DrawInstance failed
 			StealthHair, // hair under a stealth field: only its alpha makes it strands, which glass has none of
+			StealthInner, // an eye, the mouth, teeth or tongue under a stealth field (stealth_field::Part::Hidden)
 			Count
 		};
 
 		constexpr const char* kReasonNames[] = {
 			"bridge", "inactive", "nobones", "shader", "layout", "blend", "alphafunc", "colorwrite", "streamed",
-			"rtxconf", "texture", "budget", "build", "retry", "palette", "bones", "submit", "stealthhair",
+			"rtxconf", "texture", "budget", "build", "retry", "palette", "bones", "submit", "stealthhair", "stealthinner",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -889,8 +890,10 @@ namespace comp::game::api_submit
 			}
 
 			// A stealth field: glass, with no alpha state of its own.
-			if (stealth_field::covers(scene_graph::current_geometry()))
+			const stealth_field::Part stealth = stealth_field::part(scene_graph::current_geometry());
+			if (stealth != stealth_field::Part::None)
 			{
+				if (stealth == stealth_field::Part::Hidden) return refused(Reason::StealthInner);
 				if (psmap->hair_tint_reg != PsSlotMap::kNoReg) return refused(Reason::StealthHair);
 				md.stealth = true;
 				md.blend = false;

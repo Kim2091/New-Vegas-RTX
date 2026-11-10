@@ -14,8 +14,13 @@ namespace comp::game::stealth_field
 	{
 		using LT = shared::common::LOG_TYPE;
 
-		constexpr float kTint[3] = { 0.90f, 0.95f, 1.0f };
-		constexpr double kTintDistance = 48.0;   // game units
+		constexpr double kMeasureDistance = 48.0;   // game units; of no effect on clear glass, but must be positive
+
+		// Shapes inside the head, by a part of their name in lower case: the
+		// vanilla races' EyeLeftHuman, MouthHuman, TeethUpperHuman, Toungue (the
+		// game's spelling), TongueChildM, and what replacers call theirs.
+		constexpr const char* kInnerParts[] = { "eye", "mouth", "teeth", "tongue", "toungue" };
+		constexpr uint32_t kObjectName = 0x08;       // NiObjectNET::m_kName
 
 		constexpr uintptr_t kProcessManager = 0x11E0E80;
 		constexpr uint32_t kPmActorData = 0x08;      // Actor*[]
@@ -98,37 +103,62 @@ namespace comp::game::stealth_field
 		}
 	}
 
-	bool covers(uintptr_t geometry)
+	namespace
 	{
-		if (!geometry || !shared::common::config::get().stealth_field.enabled) return false;
+		bool inner_part(uintptr_t geometry)
+		{
+			// The name is a pooled string of unknown length: a long read first,
+			// a short one when that runs off its page.
+			uintptr_t text = 0;
+			char name[64] = {};
+			if (!scene_graph::read_u32(geometry + kObjectName, text) || !text) return false;
+			if (!scene_graph::read_block(text, name, sizeof(name) - 1))
+			{
+				std::memset(name, 0, sizeof(name));
+				if (!scene_graph::read_block(text, name, 15)) return false;
+			}
+			for (char& c : name)
+				if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+			for (const char* inner : kInnerParts)
+				if (std::strstr(name, inner)) return true;
+			return false;
+		}
+	}
+
+	Part part(uintptr_t geometry)
+	{
+		if (!geometry || !shared::common::config::get().stealth_field.enabled) return Part::None;
 		scan();
-		if (g_roots.empty()) return false;
+		if (g_roots.empty()) return Part::None;
 		uintptr_t obj = geometry;
 		for (int depth = 0; obj && depth < kDepthMax; depth++)
 		{
 			uintptr_t parent = 0;
 			uint32_t flags = 0;
-			if (!scene_graph::read_link(obj, parent, flags) || !parent) return false;
-			if (g_roots.count(parent)) return true;
+			if (!scene_graph::read_link(obj, parent, flags) || !parent) return Part::None;
+			if (g_roots.count(parent)) return inner_part(geometry) ? Part::Hidden : Part::Glass;
 			obj = parent;
 		}
-		return false;
+		return Part::None;
 	}
 
 	void fill_glass(remixapi_MaterialInfoTranslucentEXT& tr)
 	{
 		// A low IOR bends the view only near the silhouette and reflects almost
-		// nothing (0.3 % head-on at 1.12): the actor is seen by the shimmer at its
-		// edges, as with the engine's refraction. Solid, not thin-walled: a thin
-		// wall doesn't bend the view at all.
+		// nothing (0.06 % head-on at 1.05): the actor is seen by the shimmer at
+		// its edges, as with the engine's refraction. Solid, not thin-walled: a
+		// thin wall doesn't bend the view at all. Clear, with no tint: an actor is
+		// many open shells, not one closed body, so a ray often stays "inside the
+		// glass" long after it has left the actor, and any absorption would then
+		// darken the whole view behind the figure.
 		const float ior = shared::common::config::get().stealth_field.ior;
 		tr = {};
 		tr.sType = REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_TRANSLUCENT_EXT;
 		tr.pNext = nullptr;
 		tr.transmittanceTexture = L"";
 		tr.refractiveIndex = ior;
-		tr.transmittanceColor = { kTint[0], kTint[1], kTint[2] };
-		tr.transmittanceMeasurementDistance = static_cast<float>(kTintDistance * stable_origin::scale());
+		tr.transmittanceColor = { 1.0f, 1.0f, 1.0f };
+		tr.transmittanceMeasurementDistance = static_cast<float>(kMeasureDistance * stable_origin::scale());
 		tr.thinWallThickness_hasvalue = 0;
 		tr.thinWallThickness_value = 0.0f;
 		tr.useDiffuseLayer = 0;

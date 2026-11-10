@@ -253,7 +253,7 @@ namespace shared::common
 
 		// [StealthField]
 		stealth_field.enabled = get_bool("StealthField", "Enabled", true);
-		stealth_field.ior = std::clamp(get_float("StealthField", "Ior", 1.12f), 1.0f, 3.0f);
+		stealth_field.ior = std::clamp(get_float("StealthField", "Ior", 1.05f), 1.0f, 3.0f);
 
 		// [SaveScreenshots]
 		save_screenshots.enabled = get_bool("SaveScreenshots", "Enabled", true);

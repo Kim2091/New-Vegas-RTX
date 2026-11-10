@@ -16,11 +16,19 @@
 // and the high-process actors are asked for Chameleon and Invisibility (actor
 // values 49 and 48), and the scene roots of those above 0 are kept. A draw whose
 // geometry hangs under such a root goes out as glass (api_skinned, api_statics;
-// material::Desc::stealth). Render thread.
+// material::Desc::stealth), or not at all: what sits inside the head, and the
+// actor's glows and effects (api_unlit), which the engine refracts along with
+// the rest of the actor. Render thread.
 namespace comp::game::stealth_field
 {
-	// The geometry being drawn belongs to an actor under a stealth field.
-	bool covers(uintptr_t geometry);
+	// What the geometry being drawn is to a stealth field.
+	enum class Part : uint8_t
+	{
+		None,     // its actor is under no field
+		Glass,    // goes out as glass
+		Hidden,   // not drawn: an eye, the mouth, teeth or tongue, seen through the glass head otherwise
+	};
+	Part part(uintptr_t geometry);
 
 	// The glass such a surface is made of.
 	void fill_glass(remixapi_MaterialInfoTranslucentEXT& tr);

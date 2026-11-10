@@ -47,7 +47,13 @@ namespace comp::game::api::material
 		h.add(m.albedo_tint, sizeof(m.albedo_tint));
 		h.pod(m.emissive_intensity);
 		if (m.hair_bake) h.mix(m.hair_bake);
-		if (m.stealth) h.mix(0x5354454C5448ull);   // "STEALTH"
+		if (m.stealth)
+		{
+			// The glass is built from [StealthField] Ior (stealth_field::fill_glass):
+			// in the key, so a new value takes a new material at the next draw.
+			h.mix(0x5354454C5448ull);   // "STEALTH"
+			h.pod(shared::common::config::get().stealth_field.ior);
+		}
 		return h.get();
 	}
 
