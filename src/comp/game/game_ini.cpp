@@ -213,6 +213,26 @@ namespace comp::game::game_ini
 		}
 	}
 
+	bool read_raw(const char* const* names, size_t count, uint32_t* out)
+	{
+		if (!fnv_exe::known()) return false;
+		const auto& a = fnv_exe::addr();
+		std::vector<Found> found(count);
+		auto visit = [&](const std::string& name, uintptr_t data) {
+			for (size_t i = 0; i < count; i++)
+			{
+				if (_stricmp(name.c_str(), names[i]) != 0) continue;
+				if (found[i].setting && found[i].setting != data) found[i].duplicate = true; else found[i].setting = data;
+			}
+		};
+		std::string why;
+		if (walk(a.ini_settings, a.vtbl_ini_settings, a.vtbl_ini_setting, visit, why) < 0 ||
+			walk(a.renderer_settings, a.vtbl_renderer_settings, a.vtbl_renderer_setting, visit, why) < 0) return false;
+		for (size_t i = 0; i < count; i++)
+			if (!found[i].setting || found[i].duplicate || !get(found[i].setting + kSettingValue, out[i])) return false;
+		return true;
+	}
+
 	void install_hook()
 	{
 		if (!shared::common::config::get().get_bool("GameSettings", "Apply", true)) return;

@@ -23,4 +23,10 @@ namespace comp::game::game_ini
 	// Hooks the engine's INI write (fnv_exe settings_write). Window thread, with
 	// the game patches.
 	void install_hook();
+
+	// The raw 32-bit values of the named Settings ("name:Section", as
+	// "fQuadraticValue:bLightAttenuation"; b: low byte, f: float bits, i and
+	// u: integer), from both collections in one call. True when the
+	// executable is known and every name was found exactly once.
+	bool read_raw(const char* const* names, size_t count, uint32_t* out);
 }

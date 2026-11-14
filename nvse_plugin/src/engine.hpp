@@ -89,6 +89,14 @@ namespace fnvr::engine
 	constexpr uint8_t kFormType_LIGH = 0x1E;
 	constexpr uint32_t LIGH_flags = 0xA8;
 	constexpr uint32_t kLighFlag_OffByDefault = 0x20;      // a plain reference gets no light (0x50D8FE)
+	constexpr uint32_t kLighFlag_Flicker = 0x08, kLighFlag_FlickerSlow = 0x40;
+	constexpr uint32_t kLighFlag_Pulse = 0x80, kLighFlag_PulseSlow = 0x100;
+	constexpr uint32_t kLighFlag_JipColorShift = 0x800, kLighFlag_JipColorShiftSlow = 0x1000;   // JIP LN NVSE only
+	// Animations that keep their state in LIGHT_atten (0x50DE60; JIP hooks.h:3974, 4059).
+	constexpr uint32_t kLighFlags_AttenState = kLighFlag_Flicker | kLighFlag_FlickerSlow |
+		kLighFlag_JipColorShift | kLighFlag_JipColorShiftSlow;
+	// JIP's own 0x50DE20 test; it keeps a timer / steps in LIGHT_ambient for all of them.
+	constexpr uint32_t kLighFlags_JipAnimated = kLighFlags_AttenState | kLighFlag_Pulse | kLighFlag_PulseSlow;
 
 	// ---- NiLight ----
 	constexpr uint32_t LIGHT_dimmer = 0xC4;
@@ -97,6 +105,11 @@ namespace fnvr::engine
 	constexpr uint32_t LIGHT_diffuse = 0xD4;               // NiColor
 	constexpr uint32_t LIGHT_radius = 0xE0;                // specular.r: the radius
 	constexpr uint32_t LIGHT_atten = 0xF0;                 // constant, linear, quadratic
+	// JIP LN NVSE's own point lights (NIF LIGH_EDID, AttachLight), and a point light AttachLight found under the
+	// node and took over: NiAVObject flags bit 29 (JIP: byte +0x33 |= 0x20) and their LIGH here. An engine light
+	// holds its radius here (specular.b).
+	constexpr uint32_t kAvFlag_JipLight = 1u << 29;
+	constexpr uint32_t LIGHT_jipForm = 0xE8;
 
 	// ---- NiNode ----
 	constexpr uint32_t NODE_childData = 0xA0;              // NiAVObject*[]

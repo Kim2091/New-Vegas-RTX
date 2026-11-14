@@ -643,6 +643,143 @@ namespace comp::game
 			default:                return std::numeric_limits<float>::infinity();
 			}
 		}
+
+		// ConfigurePointLight (0x50C350) settings, cleaned up as 0x50E6C0 does. Defaults = the shipped INI.
+		struct AttenSettings
+		{
+			bool read = false, from_game = false;
+			uint8_t mask = 4;   // terms on: 1 constant, 2 linear, 4 quadratic
+			float constant = 0, lin_value = 3, lin_mult = 1, quad_value = 16, quad_mult = 1;
+			int32_t lin_method = 1, quad_method = 2;
+			bool out_quad_in_lin = false;
+		};
+		AttenSettings g_atten;
+
+		// ConfigurePointLight (0x50C350): what TESObjectLIGH::CreateLight (0x50D810) gives a light of this radius.
+		std::array<float, 3> engine_atten(float radius, bool interior)
+		{
+			const AttenSettings& s = g_atten;
+			const uint32_t count = radius >= 1.0f && radius < 4294967040.0f   // (unsigned) radius
+				? static_cast<uint32_t>(radius) : 0u;
+			std::array<float, 3> a = { (s.mask & 1) ? s.constant : 0.0f, 0.0f, 0.0f };
+			if ((s.mask & 2) || (interior && s.out_quad_in_lin))
+			{
+				const float m = static_cast<float>(static_cast<double>(count) * s.lin_mult);
+				a[1] = s.lin_method == 0 ? s.lin_value : m == 0.0f ? 0.01f
+					: s.lin_method == 2 ? s.lin_value / (m * m) : static_cast<float>((1.0 / m) * s.lin_value);
+			}
+			if ((s.mask & 4) || (!interior && s.out_quad_in_lin))
+			{
+				const float m = static_cast<float>(static_cast<double>(count) * s.quad_mult);
+				a[2] = s.quad_method == 0 ? s.quad_value : m == 0.0f ? 0.01f
+					: s.quad_method == 1 ? static_cast<float>((1.0 / count) * s.quad_value) : s.quad_value / (m * m);
+			}
+			return a;
+		}
+
+		void read_atten_settings()
+		{
+			if (g_atten.read) return;
+			g_atten.read = true;
+			static constexpr const char* kNames[] = { "bUseConstant:bLightAttenuation", "bUseLinear:bLightAttenuation",
+				"bUseQuadratic:bLightAttenuation", "fConstantValue:bLightAttenuation", "fLinearValue:bLightAttenuation",
+				"fLinearRadiusMult:bLightAttenuation", "uLinearMethod:bLightAttenuation", "fQuadraticValue:bLightAttenuation",
+				"fQuadraticRadiusMult:bLightAttenuation", "uQuadraticMethod:bLightAttenuation",
+				"bOutQuadInLin:bLightAttenuation" };
+			uint32_t v[std::size(kNames)] = {};
+			if (game_ini::read_raw(kNames, std::size(kNames), v))
+			{
+				auto f = [](uint32_t r) { float x; std::memcpy(&x, &r, 4); return x; };
+				AttenSettings s;
+				s.read = s.from_game = true;
+				s.mask = static_cast<uint8_t>(((v[0] & 0xFF) ? 1 : 0) | ((v[1] & 0xFF) ? 2 : 0) | ((v[2] & 0xFF) ? 4 : 0));
+				if (!s.mask) s.mask = 4;
+				s.constant = f(v[3]);
+				s.lin_value = f(v[4]); s.lin_mult = f(v[5]); s.lin_method = static_cast<int32_t>(v[6]);
+				s.quad_value = f(v[7]); s.quad_mult = f(v[8]); s.quad_method = static_cast<int32_t>(v[9]);
+				s.out_quad_in_lin = (v[10] & 0xFF) != 0;
+				if (s.lin_method < 0 || s.lin_method > 2) s.lin_method = 1;
+				if (s.quad_method < 0 || s.quad_method > 2) s.quad_method = 2;
+				if (s.lin_mult == 0.0f) s.lin_mult = 1.0f;
+				if (s.quad_mult == 0.0f) s.quad_mult = 1.0f;
+				g_atten = s;
+			}
+			const auto& s = g_atten;
+			const auto e = engine_atten(512.0f, false);
+			shared::common::log_event("Lights", std::format("animated lights get the attenuation ConfigurePointLight "
+				"(0x50C350) gives their radius; [bLightAttenuation] {}: terms on {} | fConstantValue {:g} | fLinearValue {:g} "
+				"uLinearMethod {} fLinearRadiusMult {:g} | fQuadraticValue {:g} uQuadraticMethod {} "
+				"fQuadraticRadiusMult {:g} | bOutQuadInLin {} -> radius 512 outdoors ({:g}, {:g}, {:g})",
+				s.from_game ? "as the game holds it" : "NOT READ, the shipped defaults", s.mask, s.constant,
+				s.lin_value, s.lin_method, s.lin_mult, s.quad_value, s.quad_method, s.quad_mult, s.out_quad_in_lin ? 1 : 0,
+				e[0], e[1], e[2]),
+				s.from_game ? shared::common::LOG_TYPE::LOG_TYPE_STATUS : shared::common::LOG_TYPE::LOG_TYPE_WARN);
+		}
+
+		bool finite_nonneg(float v) { return std::isfinite(v) && v >= 0.0f; }   // -0.0 passes
+
+		struct AnimStats
+		{
+			uint32_t placed = 0, jip = 0, guessed = 0, checked = 0, equal = 0;   // this frame, lit lights
+			uint64_t light_frames = 0, differed = 0, bad_atten = 0, bad_ambient = 0, refused = 0, range0 = 0;   // since start
+			uint32_t most = 0, differed_logged = 0;
+		};
+		AnimStats g_anim;
+		std::unordered_set<uintptr_t> g_anim_logged;   // NiLights whose replacement was logged
+
+		// An animated light gets what it carries when not animated: the rest attenuation (JIP lights (0,0,0)) and ambient 0.
+		// An invalid term gets the same. The valid values of a light that is not animated are left byte for byte.
+		void settle(FnvRemixLight& l, bool interior)
+		{
+			const bool anim_atten = (l.anim & FNVR_LA_ATTEN) != 0;
+			// The formula against the engine's own values. A JIP light carries JIP's (0, 0, 0) instead.
+			if (!anim_atten && !(l.anim & FNVR_LA_JIP) && l.kind == FNVR_LK_PLACED && l.lit)
+			{
+				const auto e = engine_atten(l.radius, interior);
+				g_anim.checked++;
+				if (std::memcmp(e.data(), l.atten, sizeof(l.atten)) == 0) g_anim.equal++;
+				else if (g_anim.differed++, g_anim.differed_logged < 3)
+				{
+					g_anim.differed_logged++;
+					shared::common::log("Lights", std::format("rest attenuation check: steady placed light NiLight 0x{:X} "
+						"radius {:.2f}: the engine set ({:g}, {:g}, {:g}), the formula gives ({:g}, {:g}, {:g})", l.id,
+						l.radius, l.atten[0], l.atten[1], l.atten[2], e[0], e[1], e[2]),
+						shared::common::LOG_TYPE::LOG_TYPE_WARN);
+				}
+			}
+			const bool bad = !finite_nonneg(l.atten[0]) || !finite_nonneg(l.atten[1]) || !finite_nonneg(l.atten[2]);
+			if (anim_atten || bad)
+			{
+				const std::array<float, 3> rest = (l.anim & FNVR_LA_JIP) ? std::array<float, 3>{}
+					: engine_atten(l.radius, interior);
+				if (g_anim_logged.size() >= 4096) g_anim_logged.clear();
+				if (l.lit && g_anim_logged.insert(l.id).second)
+					shared::common::log("Lights", std::format("{} NiLight 0x{:X} ({}{}) radius {:.0f}: attenuation floats "
+						"({:g}, {:g}, {:g}) -> sent its rest attenuation ({:g}, {:g}, {:g})",
+						anim_atten ? "animated light" : "light with a bad attenuation", l.id,
+						l.kind == FNVR_LK_PLACED ? "placed" : l.kind == FNVR_LK_PLAYER ? "player" : "effect",
+						(l.anim & FNVR_LA_JIP) ? ", JIP" : (l.anim & FNVR_LA_GUESS) ? ", its floats changed" : "", l.radius,
+						l.atten[0], l.atten[1], l.atten[2], rest[0], rest[1], rest[2]));
+				std::memcpy(l.atten, rest.data(), sizeof(l.atten));
+				if (!anim_atten) g_anim.bad_atten++;
+				else if (l.lit)
+					((l.anim & FNVR_LA_JIP) ? g_anim.jip : (l.anim & FNVR_LA_GUESS) ? g_anim.guessed : g_anim.placed)++;
+			}
+			if ((l.anim & FNVR_LA_AMBIENT) || !finite_nonneg(l.ambient[0]) || !finite_nonneg(l.ambient[1]) ||
+				!finite_nonneg(l.ambient[2]))
+			{
+				if (!(l.anim & FNVR_LA_AMBIENT)) g_anim.bad_ambient++;
+				l.ambient[0] = l.ambient[1] = l.ambient[2] = 0.0f;
+			}
+		}
+
+		bool sane(const D3DLIGHT9& d)   // what the device may get; Range +inf (RangeMode 2) passes, NaN fails
+		{
+			return finite_nonneg(d.Diffuse.r) && finite_nonneg(d.Diffuse.g) && finite_nonneg(d.Diffuse.b) &&
+				finite_nonneg(d.Ambient.r) && finite_nonneg(d.Ambient.g) && finite_nonneg(d.Ambient.b) &&
+				finite_nonneg(d.Attenuation0) && finite_nonneg(d.Attenuation1) && finite_nonneg(d.Attenuation2) &&
+				std::isfinite(d.Position.x) && std::isfinite(d.Position.y) && std::isfinite(d.Position.z) && d.Range >= 0.0f;
+		}
 	}
 
 	void update_lights(IDirect3DDevice9* dev)
@@ -678,6 +815,15 @@ namespace comp::game
 		const uint32_t n = nvse_link::lights(s_reg, kRegistryMax);
 		const FnvRemixFacts& facts = nvse_link::facts();
 		const float strength = light_intensity;
+		read_atten_settings();
+		g_anim.placed = g_anim.jip = g_anim.guessed = g_anim.checked = g_anim.equal = 0;
+		const bool interior = facts.ready && facts.interior;
+		for (uint32_t k = 0; k < n; k++) settle(s_reg[k], interior);
+		{
+			const uint32_t r = g_anim.placed + g_anim.jip + g_anim.guessed;
+			g_anim.light_frames += r;
+			g_anim.most = (std::max)(g_anim.most, r);
+		}
 
 		// First / third person from the plugin; each switch logged once.
 		{
@@ -696,7 +842,7 @@ namespace comp::game
 		}
 
 		int i = 0;
-		auto emit = [&](const FnvRemixLight& l, bool player_light) {
+		auto emit = [&](const FnvRemixLight& l, bool player_light) -> bool {
 			const float* cam = camera_position();
 			const float gain = l.dimmer * strength * (player_light ? pipboy_light_intensity : 1.0f);
 			D3DLIGHT9 light = {};
@@ -746,8 +892,9 @@ namespace comp::game
 			light.Attenuation2 = l.atten[2];
 			// The player's light is linear-only (0, 1, 0: the NiPointLight ctor's,
 			// never overridden); the runtime's legacy conversion makes that nearly
-			// black. Give it the placed lights' quadratic falloff (they carry
-			// (0, 0, ~0.001)).
+			// black. Give it a quadratic falloff of 0.001, about what a placed light
+			// of radius 128 carries (placed lights carry (0, 0, 16 / floor(radius)^2)
+			// with the shipped [bLightAttenuation]: 6.1e-5 at radius 512).
 			if (player_light && l.atten[0] == 0.0f && l.atten[2] == 0.0f && l.atten[1] > 0.0f)
 			{
 				light.Attenuation1 = 0.0f;
@@ -783,9 +930,12 @@ namespace comp::game
 			// Into the render frame: the stable origin's D and the world unit scale.
 			stable_origin::light_to_render(light);
 
+			if (!sane(light)) { g_anim.refused++; return false; }   // the runtime would make a NaN light of it
+			if (light.Range == 0.0f) g_anim.range0++;               // sent as before (pre-existing radius-0 lights)
 			const auto slot = static_cast<DWORD>(i++);
 			dev->SetLight(slot, &light);
 			dev->LightEnable(slot, TRUE);
+			return true;
 		};
 
 		// The player's light first, while the engine holds it and it is lit.
@@ -814,40 +964,42 @@ namespace comp::game
 					pl.pos[2] = pp[2] + 100.0f;
 				}
 			}
-			emit(pl, true);
-
-			// What went out, once per change of light / mode / placement and
-			// once per 600 frames: the D3D9 position (render units, (camera-
-			// relative + D) * s), the world position it stands for, the camera
-			// and the player.
-			D3DLIGHT9 sent = {};
-			dev->GetLight(0, &sent);
-			const double* d = stable_origin::shift();
-			const double s = stable_origin::scale();
-			const float wx = static_cast<float>(sent.Position.x / s - d[0] + camera_position()[0]);
-			const float wy = static_cast<float>(sent.Position.y / s - d[1] + camera_position()[1]);
-			const float wz = static_cast<float>(sent.Position.z / s - d[2] + camera_position()[2]);
-			static uintptr_t s_id = 0;
-			static bool s_tp = false, s_away = false;
-			static UINT s_frame = 0;
-			const UINT fnow = shared::common::ffp_state::get().frame_count();
-			const bool away = far_by > 600.0f;
-			if (pl.id != s_id || g_player_third_person != s_tp || away != s_away || fnow - s_frame >= 600)
+			if (emit(pl, true))
 			{
-				s_id = pl.id;
-				s_tp = g_player_third_person;
-				s_away = away;
-				s_frame = fnow;
-				shared::common::log("Lights", std::format(
-					"Pip-Boy light sent [slot 0]: {} person, D3D9 position ({:.1f}, {:.1f}, {:.1f}) = world ({:.1f}, {:.1f}, "
-					"{:.1f}) | engine light ({:.1f}, {:.1f}, {:.1f}){} | camera ({:.1f}, {:.1f}, {:.1f}) player ({:.1f}, "
-					"{:.1f}, {:.1f}) forward ({:.2f}, {:.2f}, {:.2f}) | diffuse ({:.2f}, {:.2f}, {:.2f}) range {:.0f} atten "
-					"({:.3f}, {:.3f}, {:.4f})", g_player_third_person ? "third" : "first", sent.Position.x, sent.Position.y,
-					sent.Position.z, wx, wy, wz, player->pos[0], player->pos[1], player->pos[2],
-					away ? std::format(" -- {:.0f} units from the player, placed at the player", far_by) : std::string(),
-					camera_position()[0], camera_position()[1], camera_position()[2], pp[0], pp[1], pp[2],
-					g_world_fwd[0], g_world_fwd[1], g_world_fwd[2], sent.Diffuse.r, sent.Diffuse.g, sent.Diffuse.b, sent.Range,
-					sent.Attenuation0, sent.Attenuation1, sent.Attenuation2), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+				// What went out, once per change of light / mode / placement and
+				// once per 600 frames: the D3D9 position (render units, (camera-
+				// relative + D) * s), the world position it stands for, the camera
+				// and the player.
+				D3DLIGHT9 sent = {};
+				dev->GetLight(0, &sent);
+				const double* d = stable_origin::shift();
+				const double s = stable_origin::scale();
+				const float wx = static_cast<float>(sent.Position.x / s - d[0] + camera_position()[0]);
+				const float wy = static_cast<float>(sent.Position.y / s - d[1] + camera_position()[1]);
+				const float wz = static_cast<float>(sent.Position.z / s - d[2] + camera_position()[2]);
+				static uintptr_t s_id = 0;
+				static bool s_tp = false, s_away = false;
+				static UINT s_frame = 0;
+				const UINT fnow = shared::common::ffp_state::get().frame_count();
+				const bool away = far_by > 600.0f;
+				if (pl.id != s_id || g_player_third_person != s_tp || away != s_away || fnow - s_frame >= 600)
+				{
+					s_id = pl.id;
+					s_tp = g_player_third_person;
+					s_away = away;
+					s_frame = fnow;
+					shared::common::log("Lights", std::format(
+						"Pip-Boy light sent [slot 0]: {} person, D3D9 position ({:.1f}, {:.1f}, {:.1f}) = world ({:.1f}, "
+						"{:.1f}, {:.1f}) | engine light ({:.1f}, {:.1f}, {:.1f}){} | camera ({:.1f}, {:.1f}, {:.1f}) player "
+						"({:.1f}, {:.1f}, {:.1f}) forward ({:.2f}, {:.2f}, {:.2f}) | diffuse ({:.2f}, {:.2f}, {:.2f}) range "
+						"{:.0f} atten ({:.3f}, {:.3f}, {:.4f})", g_player_third_person ? "third" : "first", sent.Position.x,
+						sent.Position.y, sent.Position.z, wx, wy, wz, player->pos[0], player->pos[1], player->pos[2],
+						away ? std::format(" -- {:.0f} units from the player, placed at the player", far_by) : std::string(),
+						camera_position()[0], camera_position()[1], camera_position()[2], pp[0], pp[1], pp[2],
+						g_world_fwd[0], g_world_fwd[1], g_world_fwd[2], sent.Diffuse.r, sent.Diffuse.g, sent.Diffuse.b,
+						sent.Range, sent.Attenuation0, sent.Attenuation1, sent.Attenuation2),
+						shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+				}
 			}
 		}
 
@@ -906,6 +1058,13 @@ namespace comp::game
 				"over the {} cap {}), duplicates dropped {}, pins {}, Pip-Boy light {}", i, n_placed, n_effect,
 				player ? 1 : 0, n_listed, n_unlit, MAX_EXTRACTED_LIGHTS, n_over, n_dup, facts.pins, player_on ? "on" : "off"),
 				shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
+			shared::common::log("Lights", std::format("animated lights: rest attenuation sent for {} lit lights this frame "
+				"(placed {}, JIP {}, from a change {}), {} light-frames since start (most {} in a frame) | steady placed "
+				"lights equal to the engine's formula {}/{} this frame, {} light-frames differed since start | repaired since "
+				"start: attenuation {}, ambient {} | not sent (NaN or negative) {} | sent with range 0: {}",
+				g_anim.placed + g_anim.jip + g_anim.guessed, g_anim.placed, g_anim.jip, g_anim.guessed, g_anim.light_frames,
+				g_anim.most, g_anim.equal, g_anim.checked, g_anim.differed, g_anim.bad_atten, g_anim.bad_ambient,
+				g_anim.refused, g_anim.range0), shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 		}
 	}
 
