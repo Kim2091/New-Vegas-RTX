@@ -1,4 +1,4 @@
 [submodule "runtime"]
 	path = runtime
 	url = https://github.com/Kim2091/dxvk-remix.git
-	branch = fnv/main
+	branch = fnv/dev
