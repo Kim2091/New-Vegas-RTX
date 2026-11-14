@@ -887,6 +887,9 @@ namespace comp::game::api_submit
 				}
 
 				remixapi_InstanceCategoryFlags cats = m.categories;
+				// A refresh keeps the mesh's hashes, the texcoords' too, so a micromap baked
+				// from one frame's UVs would go on cutting the texture as it moves.
+				if (gs.uv_animated) cats |= REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_OPACITY_MICROMAP;
 				if (dec.viewmodel) cats |= api_camera::view_model_categories(dev);
 				else
 				{
