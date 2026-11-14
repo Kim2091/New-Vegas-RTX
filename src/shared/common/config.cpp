@@ -173,6 +173,7 @@ namespace shared::common
 			r.shader_bake_hair = get_bool("RemixApi", "ShaderBakeHair", true);
 			r.unlit_emissive_intensity = std::clamp(get_float("RemixApi", "UnlitEmissiveIntensity", 1.0f), 0.0f, 100.0f);
 			r.unlit_debug_log = get_bool("RemixApi", "UnlitDebugLog", false);
+			r.effect_membranes = get_bool("RemixApi", "EffectMembranes", true);
 			r.view_model_camera = get_bool("RemixApi", "ViewModelCamera", true);
 			r.stats_interval_frames = std::max(get_int("RemixApi", "StatsIntervalFrames", 600), 0);
 		}
@@ -344,8 +345,9 @@ namespace shared::common
 				(remix_api.retained_instances && remix_api.stable_origin) ? LOG_TYPE::LOG_TYPE_DEFAULT : LOG_TYPE::LOG_TYPE_WARN);
 		}
 		log("Config", std::format("RemixApi: ApiGlowTint={} ShaderBakeHair={} UnlitEmissiveIntensity={:.2f} UnlitDebugLog={} "
-			"ViewModelCamera={}", remix_api.api_glow_tint ? 1 : 0, remix_api.shader_bake_hair ? 1 : 0,
-			remix_api.unlit_emissive_intensity, remix_api.unlit_debug_log ? 1 : 0, remix_api.view_model_camera ? 1 : 0));
+			"ViewModelCamera={} EffectMembranes={}", remix_api.api_glow_tint ? 1 : 0, remix_api.shader_bake_hair ? 1 : 0,
+			remix_api.unlit_emissive_intensity, remix_api.unlit_debug_log ? 1 : 0, remix_api.view_model_camera ? 1 : 0,
+			remix_api.effect_membranes ? 1 : 0));
 		log("Config", std::format("TexturePacks: HeightMaps={} Suffixes='{}' MaxLoads/frame={} MaxLoadKB/frame={} Evict={}f ExtraArchives='{}'",
 			texture_packs.height_maps ? 1 : 0, texture_packs.height_suffixes, texture_packs.max_loads_per_frame,
 			texture_packs.max_load_kb_per_frame, texture_packs.evict_frames, texture_packs.extra_archives));
