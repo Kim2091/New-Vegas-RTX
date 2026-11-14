@@ -101,6 +101,28 @@ namespace comp::game::api_submit
 	// The skinned part of the periodic status line.
 	std::string skinned_status();
 
+	// Effect-shader membranes on skinned actors (a plasma kill's goo, the
+	// laser and alien disintegration: the engine's TEXEFFECT passes), from the
+	// renderer's SKINNED route. membrane_pass: the draw is such a pass.
+	// try_membrane: true when this frame's film went out through the API; a
+	// pass it does not take is not drawn (counted per reason). See
+	// api_membrane.cpp.
+	bool membrane_pass();
+	bool try_membrane(IDirect3DDevice9* dev, const api::DrawDesc& d);
+	// Empty while no such pass was seen.
+	std::string membrane_status();
+
+	// The particle half of an effect shader (the sparks off a burning body,
+	// the drops of a plasma kill): the engine's GPU particle pass
+	// (BSSM_PARTICLE, PARTICLE.vso), whose vertex shader is replayed on the
+	// CPU. gpu_particle_pass: the draw is one. try_gpu_particles: true when
+	// this frame's instance went out (skip the D3D9 draw); false keeps the
+	// draw on its old route. See api_gpu_particles.cpp.
+	bool gpu_particle_pass();
+	bool try_gpu_particles(IDirect3DDevice9* dev, const api::DrawDesc& d);
+	// Empty while no such draw was seen.
+	std::string gpu_particles_status();
+
 	// Grass batches, SpeedTree leaves and the instanced distant objects /
 	// trees (DistLod / DistTree), from the renderer's vertex-expander route.
 	// Retained placements with RetainedInstances + StableOrigin, else a

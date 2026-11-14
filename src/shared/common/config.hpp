@@ -320,6 +320,12 @@ namespace shared::common
 			// 256 a session.
 			bool unlit_debug_log = false;
 
+			// Effect-shader membranes on skinned actors (comp/game/api_membrane.cpp):
+			// the glowing film of a plasma kill's goo and of the laser / alien
+			// disintegration, sent as one more instance of the actor's geometry
+			// with the effect's colours per vertex. Off: the pass is not drawn.
+			bool effect_membranes = true;
+
 			// First-person API draws (arms, weapon, unlit FX) carry the
 			// VIEW_MODEL category and the frame's viewmodel projection goes to
 			// the runtime as its VIEW_MODEL camera (SetupCamera). With

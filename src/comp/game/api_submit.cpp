@@ -27,6 +27,11 @@ namespace comp::game::api_submit
 	void skinned_on_present();
 	void skinned_on_reset();
 	void skinned_drop_all();
+	void membrane_on_present();
+	void membrane_on_reset();
+	void membrane_drop_all();
+	void gpu_particles_on_present();
+	void gpu_particles_drop_all();
 	void foliage_on_present();
 	void foliage_on_reset();
 	void foliage_drop_all();
@@ -75,6 +80,8 @@ namespace comp::game::api_submit
 		water_on_present();
 		statics_on_present();
 		skinned_on_present();
+		membrane_on_present();
+		gpu_particles_on_present();
 		foliage_on_present();
 		unlit_on_present();
 		particles_on_present();
@@ -96,6 +103,7 @@ namespace comp::game::api_submit
 		water_on_reset();
 		statics_on_reset();
 		skinned_on_reset();
+		membrane_on_reset();
 		foliage_on_reset();
 	}
 
@@ -125,6 +133,8 @@ namespace comp::game::api_submit
 		water_drop_all();
 		statics_drop_all();
 		skinned_drop_all();
+		membrane_drop_all();
+		gpu_particles_drop_all();
 		foliage_drop_all();
 		unlit_drop_all();
 		particles_drop_all();

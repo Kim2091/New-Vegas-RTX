@@ -626,6 +626,10 @@ namespace comp::host_settings
 				"A glow map with a coloured EmittanceColor (and the unlit FX's MaterialColor) is tinted on the API "
 				"material: pushes rtx.fnvProtocol.apiGlowTint to the runtime (needs a runtime that has it). Off: coloured "
 				"glow is dropped (grey tints still scale it). Materials already built keep their tint until rebuilt.");
+			add_bool(Fx, "RemixApi", "EffectMembranes", "Kill effects: film and particles", L, &r.effect_membranes, true,
+				"The effect shaders of a kill (plasma goo, laser and alien disintegration) are sent through the API: the "
+				"glowing film over the actor, and the effect's additive particles (flames, sparks, drops). Off: no film, and "
+				"those particles stay on their old route.");
 			add_bool(Fx, "RemixApi", "ShaderBakeHair", "Hair albedo from the game's shader", L, &r.shader_bake_hair, true,
 				"Hair, beards and brows take their colour from the game's own hair shader, run on the CPU with its "
 				"lighting taken out, instead of the LayerMap blend. Baked on a background thread: the hair keeps its "
