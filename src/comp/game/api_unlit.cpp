@@ -7,6 +7,7 @@
 #include "api_camera.hpp"
 #include "scene_graph.hpp"
 #include "scene_statics.hpp"
+#include "stealth_field.hpp"
 #include "nvse_link.hpp"
 #include "scopes.hpp"
 #include "vs_expand.hpp"
@@ -141,11 +142,11 @@ namespace comp::game::api_submit
 		enum class Reason : uint8_t
 		{
 			Inactive, PipBoy, LightCard, Shader, Layout, Dynamic, Rewritten, ColorWrite, Blend, RtxConf,
-			Texture, Budget, Build, Retry, Submit, Count
+			Texture, Budget, Build, Retry, Submit, Stealth, Count
 		};
 		constexpr const char* kReasonNames[] = {
 			"inactive", "pipboy", "lightCard", "shader", "layout", "dynamic", "rewritten", "colorwrite", "blend",
-			"rtxconf", "texture", "budget", "build", "retry", "submit",
+			"rtxconf", "texture", "budget", "build", "retry", "submit", "stealth",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -766,6 +767,9 @@ namespace comp::game::api_submit
 			if (scene_statics::light_card(dev)) return refuse(Reason::LightCard);
 			dec.viewmodel = game::uses_viewmodel_projection();
 			if (!psmap || !psmap->has(PsSlotRole::Diffuse)) return refuse(Reason::Shader);
+			// The glows and effects of an actor under a stealth field: the engine
+			// refracts them along with the rest of the actor, so none is seen.
+			if (stealth_field::part(scene_graph::current_geometry()) != stealth_field::Part::None) return refuse(Reason::Stealth);
 
 			Layout L;
 			if (!get_layout(L)) return refuse(Reason::Layout, "declaration");

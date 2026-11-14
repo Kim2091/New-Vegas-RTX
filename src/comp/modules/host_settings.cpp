@@ -1041,6 +1041,13 @@ namespace comp::host_settings
 					"Read every lens file again. Unsaved changes are dropped.");
 			}
 
+			// ---- [StealthField] ----
+			const char* SF = "Stealth field";
+			add_bool(SF, "StealthField", "Enabled", "Stealth field as glass", L, &c.stealth_field.enabled, true,
+				"Actors under a Stealth Boy or another Chameleon / Invisibility effect go out as glass. Off = they stay solid.");
+			add_float(SF, "StealthField", "Ior", "Glass IOR", L, &c.stealth_field.ior, 1.05f, 1.0f, 3.0f, 0.005,
+				"Index of refraction of the glass: higher bends the background more.");
+
 			// ---- [Lights] ----
 			const char* Li = "Lights";
 			add_bool(Li, "Lights", "Enabled", "Point lights", L, &c.lights.enabled, true,

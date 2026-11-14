@@ -294,6 +294,10 @@ namespace shared::common
 		scopes.marking_color[2] = std::clamp(get_float("Scopes", "MarkingColorB", 0.0f), 0.0f, 1.0f);
 		scopes.marking_radiance = std::clamp(get_float("Scopes", "MarkingRadiance", 2.0f), 0.0f, 100.0f);
 
+		// [StealthField]
+		stealth_field.enabled = get_bool("StealthField", "Enabled", true);
+		stealth_field.ior = std::clamp(get_float("StealthField", "Ior", 1.05f), 1.0f, 3.0f);
+
 		// [SaveScreenshots]
 		save_screenshots.enabled = get_bool("SaveScreenshots", "Enabled", true);
 		save_screenshots.refresh_ms = std::clamp(get_int("SaveScreenshots", "RefreshMs", 1500), 250, 60000);
@@ -379,6 +383,7 @@ namespace shared::common
 		log("Config", std::format("WeaponMotion: Enabled={} Ironsights={} Breathing={:.2f} Inertia={:.2f} Bob={:.2f} "
 			"Recoil={:.2f}", weapon_motion.enabled ? 1 : 0, weapon_motion.ironsights ? 1 : 0, weapon_motion.breathing,
 			weapon_motion.inertia, weapon_motion.bob, weapon_motion.recoil));
+		log("Config", std::format("StealthField: Enabled={} Ior={:.3f}", stealth_field.enabled ? 1 : 0, stealth_field.ior));
 		log("Config", std::format("SaveScreenshots: Enabled={} RefreshMs={}", save_screenshots.enabled ? 1 : 0,
 			save_screenshots.refresh_ms));
 		log("Config", std::format("ScreenSpace: HideScreenSpaceDraws={} ScreenSpaceLog={}",

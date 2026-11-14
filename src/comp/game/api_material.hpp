@@ -74,6 +74,9 @@ namespace comp::game::api::material
 		uint32_t clamp_raw = kNoClampMode;
 		const char* path = "?";
 		bool plain = false;         // StaticsDebugPlainMaterial: albedo only
+		// A surface under a stealth field: real glass instead of this material
+		// (stealth_field.hpp). Set with no alpha state on the Desc.
+		bool stealth = false;
 		// The draw blends (scene statics, SceneClaimAlphaBlend): the material
 		// takes its alpha state (test and blend) from the instance's
 		// InstanceInfoBlendEXT (useDrawCallAlphaState), as the runtime's legacy

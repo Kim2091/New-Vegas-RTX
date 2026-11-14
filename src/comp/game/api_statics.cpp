@@ -10,6 +10,7 @@
 #include "scene_statics.hpp"
 #include "scopes.hpp"
 #include "stable_origin.hpp"
+#include "stealth_field.hpp"
 #include "nvse_link.hpp"
 #include "tex_pack.hpp"
 
@@ -119,11 +120,11 @@ namespace comp::game::api_submit
 		enum class Reason : uint8_t
 		{
 			PipBoy, Inactive, LightCard, Shader, VertexShader, Layout, Dynamic, Blend, RtxConf, Texture, Budget, Build,
-			Retry, Submit, Count
+			Retry, Submit, Stealth, Count
 		};
 		constexpr const char* kReasonNames[] = {
 			"pipboy", "inactive", "lightCard", "shader", "vs", "layout", "dynamic", "blend", "rtxconf", "texture",
-			"budget", "build", "retry", "submit",
+			"budget", "build", "retry", "submit", "stealth",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
 
@@ -787,6 +788,16 @@ namespace comp::game::api_submit
 			md.alpha_ref = static_cast<uint8_t>(rs(dev, D3DRS_ALPHAREF, 0) & 0xFF);
 		}
 		material::blend_test_as_cutout(md);
+		// A rigid part of an actor under a stealth field (weapon, hat): glass.
+		// What sits inside the head isn't drawn.
+		const stealth_field::Part stealth = stealth_field::part(engine_geo);
+		if (stealth == stealth_field::Part::Hidden) return refuse(Reason::Stealth);
+		if (stealth == stealth_field::Part::Glass)
+		{
+			md.stealth = true;
+			md.blend = false;
+			md.alpha_func = md.alpha_ref = 0;
+		}
 
 		const uint64_t mkey = material::key(md);
 		auto mit = g_mats.find(mkey);
