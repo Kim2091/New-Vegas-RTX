@@ -8,6 +8,7 @@
 #include "scene_graph.hpp"
 #include "scene_statics.hpp"
 #include "nvse_link.hpp"
+#include "scopes.hpp"
 #include "vs_expand.hpp"
 #include "tex_pack.hpp"
 
@@ -545,7 +546,10 @@ namespace comp::game::api_submit
 			auto* b = bridge();
 			const float* w = world_matrix();
 			if (!b || !w || !en.e.mesh) return false;
-			const remixapi_Transform t = frame_transform(w);
+			remixapi_Transform t = frame_transform(w);
+			// First-person draws (emissive gun parts) move with the weapon
+			// motion; they always go out per frame.
+			if (game::uses_viewmodel_projection()) scopes::motion_apply(t);
 			const UINT now = frame();
 			if (en.e.drawn_frame == now && std::memcmp(&en.e.drawn_xform, &t, sizeof(t)) == 0)
 			{
@@ -891,6 +895,9 @@ namespace comp::game::api_submit
 					material::log_decal("unlit", engine_geo ? engine_geo : static_cast<uintptr_t>(geometry), m.albedo_d3d9, decal);
 					cats |= decal.categories;
 					if (decal.categories) g_c.decals++;
+					// An actor's glowing parts: its lens tags (thermal heat,
+					// hostile highlighting).
+					cats |= scopes::actor_tags(engine_geo);
 				}
 				// Smoke, dust and steam cards (alpha-over blend): PARTICLE, so they
 				// stay translucent whatever the graphics preset.

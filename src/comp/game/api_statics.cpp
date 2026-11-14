@@ -8,6 +8,7 @@
 #include "api_hair_bake.hpp"
 #include "scene_graph.hpp"
 #include "scene_statics.hpp"
+#include "scopes.hpp"
 #include "stable_origin.hpp"
 #include "nvse_link.hpp"
 #include "tex_pack.hpp"
@@ -1000,11 +1001,15 @@ namespace comp::game::api_submit
 		};
 		if (vm)
 		{
+			scopes::on_first_person_draw();
 			const remixapi_InstanceCategoryFlags vmc = api_camera::view_model_categories(dev);
 			if (vmc) g_c.camera++;
 			cats |= vmc;
 			g_c.viewmodel++;
 		}
+		// An actor's rigid parts (robots, armor pieces): its lens tags
+		// (thermal heat, hostile highlighting).
+		else cats |= scopes::actor_tags(engine_geo);
 
 		// A stable world draw of a placed NiGeometry: its retained instance,
 		// kept while culled.
@@ -1042,6 +1047,7 @@ namespace comp::game::api_submit
 		ii.categoryFlags = cats;
 		ii.mesh = m.mesh;
 		ii.transform = frame_transform(w);
+		if (vm) scopes::motion_apply(ii.transform);
 		ii.doubleSided = double_sided ? 1 : 0;
 		if (b->DrawInstance(&ii) != REMIXAPI_ERROR_CODE_SUCCESS) return refuse(Reason::Submit);
 		log_route("per frame");

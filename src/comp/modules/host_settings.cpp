@@ -10,6 +10,7 @@
 #include "comp/game/stable_origin.hpp"
 #include "comp/game/tex_pack.hpp"
 #include "comp/game/vats.hpp"
+#include "comp/game/scopes.hpp"
 #include "comp/game/game_ini.hpp"
 #include "comp/game/scene_statics.hpp"
 #include "comp/game/session_report.hpp"
@@ -61,6 +62,10 @@ namespace comp::host_settings
 		constexpr const char* kActionSaveReport = "FNV.Action.SaveReport";
 		constexpr const char* kActionShowReport = "FNV.Action.ShowReport";
 		constexpr const char* kInfoSavedReport = "FNV.Info.SavedReport";
+		constexpr const char* kActionScopeSave = "FNV.Action.ScopeSave";
+		constexpr const char* kActionScopeReload = "FNV.Action.ScopeReload";
+		constexpr const char* kInfoScope = "FNV.Info.Scope";
+		constexpr const char* kScopeNode = "FNV.Scope.Node";
 		// Frames between two looks at the saved report's text.
 		constexpr UINT kInfoFrames = 30;
 
@@ -78,6 +83,11 @@ namespace comp::host_settings
 		const char* s_saved_labels[1] = { "none yet" };
 		uint32_t s_saved_generation = 0;
 
+		// The scope editor's status line and its one label.
+		std::string s_scope_text = "no scoped weapon equipped";
+		const char* s_scope_labels[1] = { "no scoped weapon equipped" };
+		uint32_t s_scope_generation = 0;
+
 		PFN_remixapi_RegisterHostSetting       s_register = nullptr;
 		PFN_remixapi_GetHostSettingsGeneration s_get_generation = nullptr;
 		PFN_remixapi_GetHostSettingValue       s_get = nullptr;
@@ -86,6 +96,14 @@ namespace comp::host_settings
 		PFN_remixapi_PollHostSettings          s_poll = nullptr;   // bridge only; optional
 
 		const char* const kLightRangeModes[] = { "Light radius", "Attenuation reaches 1/255", "Unbounded" };
+		const char* const kReticles[] = { "None", "Crosshair", "Duplex", "Dot", "Circle-dot", "Mil-dot", "German",
+			"Drop", "Stadia", "Frame", "Grid", "Dial" };
+		const char* const kLensKinds[] = { "Telescopic", "Reflex" };
+		const char* const kApertures[] = { "Circle", "Rectangle", "Binocular" };
+		const char* const kVisionModes[] = { "The weapon's own", "None", "Night", "Thermal" };
+		const char* const kMarkings[] = { "None", "Labels", "Rangefinder", "Labels and rangefinder" };
+		const char* const kReticlePlanes[] = { "Second focal plane", "First focal plane" };
+		const char* const kAimModes[] = { "Realistic (shots follow the scope)", "View (the lens follows the aim)" };
 		const char* const kMenuBgRedirectModes[] = {
 			"In place only", "In place, else backbuffer", "Always backbuffer" };
 		const char* const kLodRules[] = {
@@ -409,6 +427,21 @@ namespace comp::host_settings
 		}
 
 		// The light pass reads game.hpp's copies, taken from the ini at startup.
+		// A scope editor field: the equipped weapon's lens entry follows it.
+		void hook_scope_field(IDirect3DDevice9*, Setting& s, double v)
+		{
+			write_field(s, v);
+			game::scopes::editor::changed();
+		}
+
+		// A scope editor slider: no ini key; the entry is written by Save.
+		void add_scope_float(const char* key, const char* label, float* field, float lo, float hi, double step,
+			const char* tip)
+		{
+			add("Scope editor", nullptr, key, label, Kind::Float, Apply::Live, field, *field, lo, hi, step, tip,
+				hook_scope_field);
+		}
+
 		void hook_lights(IDirect3DDevice9*, Setting& s, double v)
 		{
 			write_field(s, v);
@@ -759,6 +792,255 @@ namespace comp::host_settings
 			add_int(V, "VATS", "SampleCount", "Rays per limb", L, &c.vats.sample_count, 7, 1, 16, 1,
 				"One ray to the limb, the rest spread on the ring. Visibility is the share that is not blocked.");
 
+			// ---- [Scopes] ----
+			const bool scope_hooks = game::scopes::hooks_installed();
+			add_bool("Scopes", "Scopes", "PathTraced", "Path-traced scopes", scope_hooks ? L : S,
+				&c.scopes.path_traced, true,
+				scope_hooks
+				? "Aim scoped weapons through a path-traced lens: the gun stays raised in its ironsights pose, with "
+				  "no 2D overlay and no zoom. Off = the game's own scopes. Applies at the next aim; the scope model "
+				  "follows at the next equip. Needs a runtime that supports lenses."
+				: "Aim scoped weapons through a path-traced lens. It was off at startup (or its hooks could not be "
+				  "installed), so switching it on needs a restart.");
+			s_settings.back().user_menu = true;
+			add_bool("Scopes", "Scopes", "AlignAim", "Align the eye with the scope", L, &c.scopes.align_aim, true,
+				"While a weapon with a lens entry is aimed, the first-person view sits at the entry's eye point "
+				"(EyepieceCenter minus EyeRelief along Axis), so the eye looks down the scope. Off = the weapon's "
+				"own ironsights pose.");
+			add_float("Scopes", "Scopes", "AlignSmoothing", "Eye follow time (s)", L, &c.scopes.align_smoothing, 0.45f,
+				0.0f, 2.0f, 0.01,
+				"How long the eye takes to catch up with the weapon motion at the scope's eye point, so sway and "
+				"recoil move the scope against the eye (the reticle drifts, the exit pupil shifts) while it stays "
+				"aligned on average. The game's own pose of the gun is followed at once. 0 = locked to the scope.");
+			add_float("Scopes", "Scopes", "AlignStrength", "Eye alignment strength", L, &c.scopes.align_strength, 1.0f,
+				0.0f, 1.0f, 0.01,
+				"0 = the weapon's own ironsights pose, 1 = the eye at the scope's eye point; values between blend.");
+			add_int("Scopes", "Scopes", "VisionKey", "Vision mode key", L, &c.scopes.vision_key, 78, 0, 254, 1,
+				"Virtual-key code that switches the lens's vision mode while aiming through it (78 = N, 0 = none). "
+				"It cycles the modes the lens's VisionModes allows; without it, none and the lens's own mode (night "
+				"on scopes with night vision).");
+			add_bool("Scopes", "Scopes", "VisionAllModes", "Night and thermal on every lens", L,
+				&c.scopes.vision_all_modes, false,
+				"The vision mode key cycles none, night and thermal on every lens, whatever its VisionModes.");
+			add_int("Scopes", "Scopes", "GamepadVisionButtons", "Gamepad vision buttons", L,
+				&c.scopes.gamepad_vision_buttons, 0x0008, 0, 0xFFFF, 1,
+				"XInput button mask that switches the vision mode while aiming through a lens (8 = d-pad right; add "
+				"buttons for a combo; 0 = none). D-pad up and down zoom. The game sees none of these buttons then.");
+			add_bool("Scopes", "Scopes", "VariableZoomAll", "Zoom on every scope", L, &c.scopes.variable_zoom_all, true,
+				"Telescopic lenses without their own zoom range zoom from half to one and a half times their default "
+				"magnification with the mouse wheel or the d-pad.");
+			add_bool("Scopes", "Scopes", "ForceFirstPerson", "First person when aiming a scope", L,
+				&c.scopes.force_first_person, true,
+				"Aiming a weapon with a lens in third person switches to first person for the aim and back after.");
+			add_bool("Scopes", "Scopes", "LensAlways", "Scope lens at the hip", L, &c.scopes.lens_always, true,
+				"The held scope's lens is there at the hip too (first person, no menu, Pip-Boy closed), at its "
+				"magnification, so raising the gun looks through the real scope from the start. Vision modes, "
+				"highlighting, the rangefinder, peripheral blur and the zoom keys still work only once aimed.");
+			add_float("Scopes", "Scopes", "PeripheralBlur", "Blur around the scope", L, &c.scopes.peripheral_blur, 0.0f,
+				0.0f, 1.0f, 0.01, "Blurs the view outside the lens while aiming through it (rtx.lens.peripheralBlur).");
+			add_bool("Scopes", "Scopes", "Sounds", "Scope sounds", L, &c.scopes.sounds, true,
+				"Zoom steps and vision mode switches play the game's own UI sounds.");
+			add_bool("Scopes", "Scopes", "AimDebugLog", "Log the aim-in", L, &c.scopes.aim_debug_log, false,
+				"Logs the scope's angle, the eye's alignment, the weapon motion, the magnification and the camera's "
+				"move every frame for the first 2 s of each aim through a lens (for bug reports).");
+			add_bool("Scopes", "Scopes", "RangefinderAll", "Rangefinder on every scope", L, &c.scopes.rangefinder_all,
+				false, "Every lens shows a range readout in meters, not only those whose entry asks for one.");
+			add_enum("Scopes", "Scopes", "AimMode", "Aim", L, &c.scopes.aim_mode, 0, kAimModes, 2,
+				"Realistic: the image follows the swaying scope, and shots fly along the scope from the scope, so the "
+				"reticle marks where they go. View: the lens looks along the view, where the game's shots go.");
+			add_bool("Scopes", "Scopes", "Parallax", "Scope parallax", L, &c.scopes.parallax, true,
+				"The reticle is focused at a distance (100 m on telescopic scopes unless the entry says otherwise): "
+				"with the eye off the axis it shifts against nearer and farther targets.");
+			add_bool("Scopes", "Scopes", "GlassEffects", "Glare and dirt on the glass", L, &c.scopes.glass_effects, true,
+				"Glare and dirt on the lens glass.");
+			add_float("Scopes", "Scopes", "GlareStrength", "Glare strength", L, &c.scopes.glare_strength, 0.5f, 0.0f,
+				1.0f, 0.01, "The glass's glare on scopes whose entry sets none.");
+			add_float("Scopes", "Scopes", "DirtStrength", "Dirt strength", L, &c.scopes.dirt_strength, 0.2f, 0.0f, 1.0f,
+				0.01, "The dirt on the glass on scopes whose entry sets none.");
+			add_int("Scopes", "Scopes", "BrightnessKey", "Brightness modifier key", L, &c.scopes.brightness_key, 0x10, 0,
+				254, 1, "Virtual-key code held with the mouse wheel to change the night or thermal brightness instead of "
+				"the zoom while a vision mode is on (16 = Shift, 0 = none).");
+			add_int("Scopes", "Scopes", "GamepadBrightnessButtons", "Gamepad brightness buttons", L,
+				&c.scopes.gamepad_brightness_buttons, 0x0100, 0, 0xFFFF, 1,
+				"XInput buttons held with d-pad up / down to change the brightness instead of the zoom (256 = left "
+				"shoulder, 0 = none).");
+			{
+				constexpr const char* kMarkingTip = "The color of the labels and the rangefinder on scopes whose entry "
+					"gives none (all 0 = the reticle accent's color).";
+				add_float("Scopes", "Scopes", "MarkingColorR", "Marking color red", L, &c.scopes.marking_color[0], 1.0f,
+					0.0f, 1.0f, 0.01, kMarkingTip);
+				add_float("Scopes", "Scopes", "MarkingColorG", "Marking color green", L, &c.scopes.marking_color[1], 0.0f,
+					0.0f, 1.0f, 0.01, kMarkingTip);
+				add_float("Scopes", "Scopes", "MarkingColorB", "Marking color blue", L, &c.scopes.marking_color[2], 0.0f,
+					0.0f, 1.0f, 0.01, kMarkingTip);
+				add_float("Scopes", "Scopes", "MarkingRadiance", "Marking radiance", L, &c.scopes.marking_radiance, 2.0f,
+					0.0f, 100.0f, 0.1, "Their radiance with that color: 0 = the accent's lit or ink look, above 0 lit.");
+			}
+
+			// ---- [WeaponMotion] ----
+			{
+				const char* Wm = "Weapon motion";
+				add_bool(Wm, "WeaponMotion", "Enabled", "Weapon motion", L, &c.weapon_motion.enabled, true,
+					"While aiming in first person the gun has its own small motion: breathing sway, a lag behind turns, "
+					"a walk / run bob and the recoil of each shot. The scope's lens moves with it.");
+				add_bool(Wm, "WeaponMotion", "Ironsights", "Also on ironsights", L, &c.weapon_motion.ironsights, true,
+					"The motion also on weapons without a scope lens.");
+				add_float(Wm, "WeaponMotion", "Breathing", "Breathing sway", L, &c.weapon_motion.breathing, 1.0f, 0.0f,
+					3.0f, 0.05, "A slow figure eight, larger after running, on low action points, with crippled arms "
+					"or low Agility. 1 = the default (a few tenths of a degree), 0 = none.");
+				add_float(Wm, "WeaponMotion", "Inertia", "Turn inertia", L, &c.weapon_motion.inertia, 1.0f, 0.0f, 3.0f,
+					0.05, "The gun lags turns and settles. 0 = none.");
+				add_float(Wm, "WeaponMotion", "Bob", "Movement bob", L, &c.weapon_motion.bob, 1.0f, 0.0f, 3.0f, 0.05,
+					"The walk / run bob while aiming. 0 = none.");
+				add_float(Wm, "WeaponMotion", "Recoil", "Recoil kick", L, &c.weapon_motion.recoil, 1.0f, 0.0f, 3.0f, 0.05,
+					"Each shot kicks the gun up and back, more for harder-hitting weapons. 0 = none.");
+			}
+
+			// ---- Scope editor (no ini keys: Save writes the weapon's lens file) ----
+			{
+				const char* E = "Scope editor";
+				auto& sf = game::scopes::editor::fields();
+				constexpr const char* kSpace = "In the first-person weapon node's space: +X toward the muzzle, +Y up, "
+					"game units.";
+				constexpr const char* kAxis = "The optical axis, from the eye toward the objective.";
+				constexpr const char* kUp = "The reticle's up direction.";
+				add_info(E, kInfoScope, "Editing", s_scope_labels,
+					"The equipped scoped weapon, its installed mods and the section of its lens file the values go to.");
+				add_scope_float("FNV.Scope.EyepieceX", "Eyepiece X", &sf.eyepiece[0], -60.0f, 60.0f, 0.01, kSpace);
+				add_scope_float("FNV.Scope.EyepieceY", "Eyepiece Y", &sf.eyepiece[1], -60.0f, 60.0f, 0.01, kSpace);
+				add_scope_float("FNV.Scope.EyepieceZ", "Eyepiece Z", &sf.eyepiece[2], -60.0f, 60.0f, 0.01, kSpace);
+				add_scope_float("FNV.Scope.AxisX", "Axis X", &sf.axis[0], -1.0f, 1.0f, 0.01, kAxis);
+				add_scope_float("FNV.Scope.AxisY", "Axis Y", &sf.axis[1], -1.0f, 1.0f, 0.01, kAxis);
+				add_scope_float("FNV.Scope.AxisZ", "Axis Z", &sf.axis[2], -1.0f, 1.0f, 0.01, kAxis);
+				add_scope_float("FNV.Scope.UpX", "Up X", &sf.up[0], -1.0f, 1.0f, 0.01, kUp);
+				add_scope_float("FNV.Scope.UpY", "Up Y", &sf.up[1], -1.0f, 1.0f, 0.01, kUp);
+				add_scope_float("FNV.Scope.UpZ", "Up Z", &sf.up[2], -1.0f, 1.0f, 0.01, kUp);
+				add_scope_float("FNV.Scope.EyepieceRadius", "Eyepiece radius", &sf.eyepiece_radius, 0.0f, 10.0f, 0.01,
+					"Game units.");
+				add_scope_float("FNV.Scope.ObjectiveDistance", "Objective distance", &sf.objective_distance, 0.0f, 80.0f,
+					0.1, "From the eyepiece along the axis, game units.");
+				add_scope_float("FNV.Scope.ObjectiveRadius", "Objective radius", &sf.objective_radius, 0.0f, 10.0f, 0.01,
+					"Game units.");
+				add_scope_float("FNV.Scope.EyeRelief", "Eye relief", &sf.eye_relief, 0.0f, 30.0f, 0.05,
+					"The eye's distance behind the eyepiece, game units (8 cm is about 5.6).");
+				add_scope_float("FNV.Scope.Magnification", "Magnification", &sf.magnification, 0.0f, 40.0f, 0.1,
+					"0 = the game's own zoom for the weapon.");
+				add_scope_float("FNV.Scope.FieldStop", "Field stop (degrees)", &sf.field_stop, 1.0f, 90.0f, 0.5,
+					"The field of view seen through the scope.");
+				add(E, nullptr, "FNV.Scope.Reticle", "Reticle", Kind::Enum, Apply::Live, &sf.reticle, sf.reticle, 0.0,
+					11.0, 0.0, "The reticle drawn in the scope (dot and circle-dot suit reflex sights).", hook_scope_field,
+					kReticles, 12);
+				add_scope_float("FNV.Scope.ReticleR", "Reticle red", &sf.reticle_color[0], 0.0f, 1.0f, 0.01, nullptr);
+				add_scope_float("FNV.Scope.ReticleG", "Reticle green", &sf.reticle_color[1], 0.0f, 1.0f, 0.01, nullptr);
+				add_scope_float("FNV.Scope.ReticleB", "Reticle blue", &sf.reticle_color[2], 0.0f, 1.0f, 0.01, nullptr);
+				add_scope_float("FNV.Scope.ReticleRadiance", "Reticle radiance", &sf.reticle_radiance, 0.0f, 100.0f, 0.1,
+					"0 = a dark reticle; above 0 it glows.");
+				add_scope_float("FNV.Scope.ReticleLineWidth", "Reticle line width", &sf.reticle_line_width, 0.0f, 0.05f,
+					0.0005, "Half-width as a fraction of the field stop radius.");
+				add_scope_float("FNV.Scope.TintR", "Glass tint red", &sf.tint[0], 0.0f, 1.0f, 0.01, nullptr);
+				add_scope_float("FNV.Scope.TintG", "Glass tint green", &sf.tint[1], 0.0f, 1.0f, 0.01, nullptr);
+				add_scope_float("FNV.Scope.TintB", "Glass tint blue", &sf.tint[2], 0.0f, 1.0f, 0.01, nullptr);
+				add(E, nullptr, "FNV.Scope.Kind", "Kind", Kind::Enum, Apply::Live, &sf.kind, sf.kind, 0.0, 1.0, 0.0,
+					"Telescopic: a magnified image with an exit pupil. Reflex: a window with the reticle at infinity "
+					"(holographic and red-dot sights).", hook_scope_field, kLensKinds, 2);
+				add(E, nullptr, "FNV.Scope.Aperture", "Aperture", Kind::Enum, Apply::Live, &sf.aperture, sf.aperture,
+					0.0, 2.0, 0.0, "The window's shape: a circle of the eyepiece radius, a rectangle that many units "
+					"high, or two such circles side by side (binocular).", hook_scope_field, kApertures, 3);
+				add_scope_float("FNV.Scope.ApertureAspect", "Aperture aspect", &sf.aperture_aspect, 0.1f, 10.0f, 0.01,
+					"A rectangle's width over its height; for the binocular aperture, each circle's center from the "
+					"axis in radii.");
+				add(E, nullptr, "FNV.Scope.VisionMode", "Vision mode", Kind::Enum, Apply::Live, &sf.vision_mode,
+					sf.vision_mode, 0.0, 3.0, 0.0, "The lens's vision mode. The weapon's own: night on scopes with night "
+					"vision, else none.", hook_scope_field, kVisionModes, 4);
+				add(E, nullptr, "FNV.Scope.VisionAllowNone", "Vision key: none", Kind::Bool, Apply::Live,
+					&sf.vision_allowed[0], sf.vision_allowed[0] ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"The vision key cycles to no vision mode (VisionModes). With no mode allowed: none and the "
+					"weapon's own mode.", hook_scope_field);
+				add(E, nullptr, "FNV.Scope.VisionAllowNight", "Vision key: night", Kind::Bool, Apply::Live,
+					&sf.vision_allowed[1], sf.vision_allowed[1] ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"The vision key cycles to night vision (VisionModes).", hook_scope_field);
+				add(E, nullptr, "FNV.Scope.VisionAllowThermal", "Vision key: thermal", Kind::Bool, Apply::Live,
+					&sf.vision_allowed[2], sf.vision_allowed[2] ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"The vision key cycles to thermal vision (VisionModes).", hook_scope_field);
+				add(E, nullptr, "FNV.Scope.HighlightHostiles", "Highlight hostiles", Kind::Bool, Apply::Live,
+					&sf.highlight_hostiles, sf.highlight_hostiles ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"Outline hostile actors in the lens.", hook_scope_field);
+				add_scope_float("FNV.Scope.MinMagnification", "Zoom: minimum", &sf.min_magnification, 0.0f, 40.0f, 0.1,
+					"The mouse wheel's zoom range. 0 = from the default magnification.");
+				add_scope_float("FNV.Scope.MaxMagnification", "Zoom: maximum", &sf.max_magnification, 0.0f, 40.0f, 0.1,
+					"The mouse wheel's zoom range. 0 = the default range (VariableZoomAll) or fixed.");
+				constexpr const char* kAccent = "The second reticle color: mil-dots and center dots.";
+				add_scope_float("FNV.Scope.AccentR", "Reticle accent red", &sf.reticle_accent_color[0], 0.0f, 1.0f, 0.01,
+					kAccent);
+				add_scope_float("FNV.Scope.AccentG", "Reticle accent green", &sf.reticle_accent_color[1], 0.0f, 1.0f,
+					0.01, kAccent);
+				add_scope_float("FNV.Scope.AccentB", "Reticle accent blue", &sf.reticle_accent_color[2], 0.0f, 1.0f,
+					0.01, kAccent);
+				add_scope_float("FNV.Scope.AccentRadiance", "Reticle accent radiance", &sf.reticle_accent_radiance, 0.0f,
+					100.0f, 0.1, "0 = unlit ink; above 0 the accent glows.");
+				constexpr const char* kGlow = "A glow ring at the field stop.";
+				add_scope_float("FNV.Scope.GlowR", "Edge glow red", &sf.edge_glow_color[0], 0.0f, 1.0f, 0.01, kGlow);
+				add_scope_float("FNV.Scope.GlowG", "Edge glow green", &sf.edge_glow_color[1], 0.0f, 1.0f, 0.01, kGlow);
+				add_scope_float("FNV.Scope.GlowB", "Edge glow blue", &sf.edge_glow_color[2], 0.0f, 1.0f, 0.01, kGlow);
+				add_scope_float("FNV.Scope.GlowStrength", "Edge glow strength", &sf.edge_glow_strength, 0.0f, 20.0f, 0.05,
+					"0 = no ring.");
+				add_scope_float("FNV.Scope.EdgeShade", "Edge shading", &sf.edge_shade, 0.0f, 1.0f, 0.01,
+					"Darkening toward the field stop.");
+				constexpr const char* kEdgeTint = "A colored vignette toward the field stop; all 0 = none.";
+				add_scope_float("FNV.Scope.EdgeTintR", "Edge tint red", &sf.edge_tint[0], 0.0f, 1.0f, 0.01, kEdgeTint);
+				add_scope_float("FNV.Scope.EdgeTintG", "Edge tint green", &sf.edge_tint[1], 0.0f, 1.0f, 0.01, kEdgeTint);
+				add_scope_float("FNV.Scope.EdgeTintB", "Edge tint blue", &sf.edge_tint[2], 0.0f, 1.0f, 0.01, kEdgeTint);
+				constexpr const char* kNight = "The night-vision phosphor color; all 0 = the runtime's.";
+				add_scope_float("FNV.Scope.NightR", "Night tint red", &sf.night_tint[0], 0.0f, 1.0f, 0.01, kNight);
+				add_scope_float("FNV.Scope.NightG", "Night tint green", &sf.night_tint[1], 0.0f, 1.0f, 0.01, kNight);
+				add_scope_float("FNV.Scope.NightB", "Night tint blue", &sf.night_tint[2], 0.0f, 1.0f, 0.01, kNight);
+				add_scope_float("FNV.Scope.NightGain", "Night gain", &sf.night_gain, 0.0f, 20.0f, 0.05,
+					"A multiplier on the night-vision gain; 0 = 1.");
+				add(E, nullptr, "FNV.Scope.Markings", "Markings", Kind::Enum, Apply::Live, &sf.markings, sf.markings,
+					0.0, 3.0, 0.0, "The reticle style's labels (scale numbers), and a range readout in meters.",
+					hook_scope_field, kMarkings, 4);
+				add(E, nullptr, "FNV.Scope.ReticlePlane", "Reticle plane", Kind::Enum, Apply::Live, &sf.reticle_plane,
+					sf.reticle_plane, 0.0, 1.0, 0.0, "Second focal plane: the reticle keeps its size at any zoom. First "
+					"focal plane: it grows with the zoom from the default magnification.",
+					hook_scope_field, kReticlePlanes, 2);
+				add(E, nullptr, "FNV.Scope.MarkingColorSet", "Own marking color", Kind::Bool, Apply::Live,
+					&sf.marking_color_set, sf.marking_color_set ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"On: the markings use the color below. Off: [Scopes] MarkingColor (red).", hook_scope_field);
+				add_scope_float("FNV.Scope.MarkingR", "Marking red", &sf.marking_color[0], 0.0f, 1.0f, 0.01,
+					"All 0 = the reticle accent's color.");
+				add_scope_float("FNV.Scope.MarkingG", "Marking green", &sf.marking_color[1], 0.0f, 1.0f, 0.01,
+					"All 0 = the reticle accent's color.");
+				add_scope_float("FNV.Scope.MarkingB", "Marking blue", &sf.marking_color[2], 0.0f, 1.0f, 0.01,
+					"All 0 = the reticle accent's color.");
+				add_scope_float("FNV.Scope.MarkingRadiance", "Marking radiance", &sf.marking_radiance, 0.0f, 100.0f, 0.1,
+					"0 = the accent's lit or ink look; above 0 the markings glow.");
+				add_scope_float("FNV.Scope.MarkingOpacity", "Marking opacity", &sf.marking_opacity, 0.0f, 1.0f, 0.01,
+					"How much the markings cover; 0 = opaque.");
+				add_scope_float("FNV.Scope.ParallaxDistance", "Parallax distance (m)", &sf.parallax_m, -1.0f, 1000.0f,
+					1.0, "The distance the reticle is focused at. 0 = none; -1 = the default (100 m telescopic, none "
+					"reflex).");
+				add_scope_float("FNV.Scope.Glare", "Glare strength", &sf.glare, -1.0f, 1.0f, 0.01,
+					"Glare on the glass; -1 = [Scopes] GlareStrength.");
+				add_scope_float("FNV.Scope.Dirt", "Dirt strength", &sf.dirt, -1.0f, 1.0f, 0.01,
+					"Dirt on the glass; -1 = [Scopes] DirtStrength.");
+				{
+					uint32_t node_count = 0;
+					const char* const* node_labels = game::scopes::editor::node_labels(node_count);
+					add(E, nullptr, kScopeNode, "Node", Kind::Enum, Apply::Live, &sf.node, sf.node, 0.0,
+						static_cast<double>(node_count - 1), 0.0, "The node of the weapon's model the values are in: "
+						"its root, or a named node that moves on its own (a scope that recoils).", hook_scope_field,
+						node_labels, node_count);
+				}
+				add(E, nullptr, "FNV.Scope.Combination", "Only for these weapon mods", Kind::Bool, Apply::Live,
+					&sf.combination, sf.combination ? 1.0 : 0.0, 0.0, 1.0, 0.0,
+					"On: the values go to the section for the installed mod combination ([Lens.<slots>]). Off: the "
+					"weapon's [Lens] section, used for every combination without its own.", hook_scope_field);
+				add_action(E, kActionScopeSave, "Save scope",
+					"Write the weapon's lens file, Data\\Config\\NewVegasRTX\\Scopes\\<EditorID>.ini.");
+				add_action(E, kActionScopeReload, "Reload scope files",
+					"Read every lens file again. Unsaved changes are dropped.");
+			}
+
 			// ---- [Lights] ----
 			const char* Li = "Lights";
 			add_bool(Li, "Lights", "Enabled", "Point lights", L, &c.lights.enabled, true,
@@ -873,6 +1155,8 @@ namespace comp::host_settings
 							"instance owns the session files", shared::common::LOG_TYPE::LOG_TYPE_WARN);
 				}
 				else if (std::strcmp(s.key, kActionShowReport) == 0) game::session_report::show_saved();
+				else if (std::strcmp(s.key, kActionScopeSave) == 0) game::scopes::editor::save();
+				else if (std::strcmp(s.key, kActionScopeReload) == 0) game::scopes::editor::reload();
 				return;
 			}
 			if (s.kind == Kind::Info) return;
@@ -881,6 +1165,8 @@ namespace comp::host_settings
 				if (s.hook) s.hook(dev, s, v);
 				else write_field(s, v);
 			}
+			// A setting without an ini key (the scope editor) is not saved.
+			if (!s.sec) return;
 			save_to_ini(s, s.last);
 			shared::common::log_event("HostSettings", std::format("[{}] {}: {} -> {}{}", s.sec, s.key, format_ini(s, old),
 				format_ini(s, s.last),
@@ -993,6 +1279,31 @@ namespace comp::host_settings
 				if (s.kind == Kind::Info && s.handle) register_setting(s);
 		}
 
+		// The scope editor's Editing line follows the editor's status.
+		void refresh_scope_status()
+		{
+			const uint32_t gen = game::scopes::editor::status_generation();
+			if (gen == s_scope_generation) return;
+			s_scope_generation = gen;
+			s_scope_text = game::scopes::editor::status();
+			s_scope_labels[0] = s_scope_text.c_str();
+			uint32_t node_count = 0;
+			const char* const* node_labels = game::scopes::editor::node_labels(node_count);
+			for (auto& s : s_settings)
+			{
+				if (!s.handle) continue;
+				if (s.kind == Kind::Info && std::strcmp(s.key, kInfoScope) == 0) register_setting(s);
+				// The Node choice lists the equipped weapon's nodes.
+				if (s.kind == Kind::Enum && std::strcmp(s.key, kScopeNode) == 0)
+				{
+					s.enum_labels = node_labels;
+					s.enum_count = node_count;
+					s.hi = static_cast<double>(node_count - 1);
+					register_setting(s);
+				}
+			}
+		}
+
 		void register_all()
 		{
 			if (!resolve())
@@ -1100,6 +1411,7 @@ namespace comp::host_settings
 		{
 			s_info_frames = 0;
 			refresh_saved_report();
+			refresh_scope_status();
 		}
 
 		// The poll is a synchronous bridge round trip: it waits for the server

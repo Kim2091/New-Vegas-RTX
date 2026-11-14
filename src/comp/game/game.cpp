@@ -19,6 +19,7 @@
 #include "nvse_link.hpp"
 #include "underwater.hpp"
 #include "vats.hpp"
+#include "scopes.hpp"
 #include "save_thumbnail.hpp"
 #include "api_common.hpp"
 #include "api_camera.hpp"
@@ -229,6 +230,7 @@ namespace comp::game
 		vs_expand::on_present();
 		lod_debug::on_present();
 		vats::on_frame_end();
+		scopes::on_frame_end();
 		save_thumbnail::on_present();
 
 		if (++g_shadow_cache_frame >= SHADOW_CACHE_FLUSH_FRAMES)
@@ -1226,6 +1228,9 @@ namespace comp::game
 
 		// VATS limb visibility from line of sight (vats.cpp)
 		vats::install();
+
+		// Scopes drawn as a path-traced lens (scopes.cpp)
+		scopes::install();
 
 		// Save screenshots from the runtime's thumbnail (save_thumbnail.cpp)
 		save_thumbnail::install();

@@ -276,9 +276,19 @@ namespace comp::game::call_chain
 				code.addr, what, s.target, s.owner, s.bytes, hex(code.bytes, code.len)),
 				shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 		else if (s.state == State::Foreign)
-			shared::common::log(tag, std::format("0x{:X} ({}) holds [{}], expected the engine's call [{}] or another "
+		{
+			// A jump or call there names the module it leads into, when it is one.
+			std::string into;
+			const auto* p = reinterpret_cast<const uint8_t*>(code.addr);
+			if (p[0] == 0xE8 || p[0] == 0xE9)
+			{
+				const uintptr_t to = code.addr + 5 + static_cast<uintptr_t>(*reinterpret_cast<const int32_t*>(p + 1));
+				into = std::format(" (it leads to 0x{:X} in {})", to, owner_of(to));
+			}
+			shared::common::log(tag, std::format("0x{:X} ({}) holds [{}]{}, expected the engine's call [{}] or another "
 				"mod's call into executable code -- another mod rewrote it, so the wrapper leaves it alone.",
-				code.addr, what, s.bytes, hex(code.bytes, code.len)), shared::common::LOG_TYPE::LOG_TYPE_WARN, true);
+				code.addr, what, s.bytes, into, hex(code.bytes, code.len)), shared::common::LOG_TYPE::LOG_TYPE_WARN, true);
+		}
 	}
 
 	bool hook_entry(const fnv_exe::Code& code, void* detour, void** original, const char* tag, const char* what,

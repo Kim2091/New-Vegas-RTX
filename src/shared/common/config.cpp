@@ -251,6 +251,49 @@ namespace shared::common
 		vats.sample_radius = std::clamp(get_float("VATS", "SampleRadius", 10.0f), 0.0f, 100.0f);
 		vats.sample_count = std::clamp(get_int("VATS", "SampleCount", 7), 1, 16);
 
+		// [Scopes]
+		scopes.path_traced = get_bool("Scopes", "PathTraced", true);
+		scopes.align_aim = get_bool("Scopes", "AlignAim", true);
+		scopes.align_smoothing = std::clamp(get_float("Scopes", "AlignSmoothing", 0.45f), 0.0f, 2.0f);
+		scopes.align_strength = std::clamp(get_float("Scopes", "AlignStrength", 1.0f), 0.0f, 1.0f);
+		scopes.vision_key = std::clamp(get_int("Scopes", "VisionKey", 78), 0, 254);
+		scopes.vision_all_modes = get_bool("Scopes", "VisionAllModes", false);
+		scopes.gamepad_vision_buttons = std::clamp(get_int("Scopes", "GamepadVisionButtons", 0x0008), 0, 0xFFFF);
+		scopes.variable_zoom_all = get_bool("Scopes", "VariableZoomAll", true);
+		scopes.force_first_person = get_bool("Scopes", "ForceFirstPerson", true);
+		scopes.lens_always = get_bool("Scopes", "LensAlways", true);
+		scopes.peripheral_blur = std::clamp(get_float("Scopes", "PeripheralBlur", 0.0f), 0.0f, 1.0f);
+		scopes.sounds = get_bool("Scopes", "Sounds", true);
+		scopes.aim_debug_log = get_bool("Scopes", "AimDebugLog", false);
+		scopes.rangefinder_all = get_bool("Scopes", "RangefinderAll", false);
+		{
+			// AimMode = realistic | view; an older remix-comp.ini's ReticleOnAim
+			// (1 view, 0 the lens along the scope) stands in while AimMode is
+			// absent.
+			const std::string mode = get_string("Scopes", "AimMode", "");
+			if (!mode.empty()) scopes.aim_mode = (_stricmp(mode.c_str(), "view") == 0 || mode == "1") ? 1 : 0;
+			else if (!get_string("Scopes", "ReticleOnAim", "").empty())
+				scopes.aim_mode = get_bool("Scopes", "ReticleOnAim", false) ? 1 : 0;
+		}
+		scopes.parallax = get_bool("Scopes", "Parallax", true);
+		scopes.glass_effects = get_bool("Scopes", "GlassEffects", true);
+		scopes.glare_strength = std::clamp(get_float("Scopes", "GlareStrength", 0.5f), 0.0f, 1.0f);
+
+		// [WeaponMotion]
+		weapon_motion.enabled = get_bool("WeaponMotion", "Enabled", true);
+		weapon_motion.ironsights = get_bool("WeaponMotion", "Ironsights", true);
+		weapon_motion.breathing = std::clamp(get_float("WeaponMotion", "Breathing", 1.0f), 0.0f, 3.0f);
+		weapon_motion.inertia = std::clamp(get_float("WeaponMotion", "Inertia", 1.0f), 0.0f, 3.0f);
+		weapon_motion.bob = std::clamp(get_float("WeaponMotion", "Bob", 1.0f), 0.0f, 3.0f);
+		weapon_motion.recoil = std::clamp(get_float("WeaponMotion", "Recoil", 1.0f), 0.0f, 3.0f);
+		scopes.dirt_strength = std::clamp(get_float("Scopes", "DirtStrength", 0.2f), 0.0f, 1.0f);
+		scopes.brightness_key = std::clamp(get_int("Scopes", "BrightnessKey", 0x10), 0, 254);
+		scopes.gamepad_brightness_buttons = std::clamp(get_int("Scopes", "GamepadBrightnessButtons", 0x0100), 0, 0xFFFF);
+		scopes.marking_color[0] = std::clamp(get_float("Scopes", "MarkingColorR", 1.0f), 0.0f, 1.0f);
+		scopes.marking_color[1] = std::clamp(get_float("Scopes", "MarkingColorG", 0.0f), 0.0f, 1.0f);
+		scopes.marking_color[2] = std::clamp(get_float("Scopes", "MarkingColorB", 0.0f), 0.0f, 1.0f);
+		scopes.marking_radiance = std::clamp(get_float("Scopes", "MarkingRadiance", 2.0f), 0.0f, 100.0f);
+
 		// [SaveScreenshots]
 		save_screenshots.enabled = get_bool("SaveScreenshots", "Enabled", true);
 		save_screenshots.refresh_ms = std::clamp(get_int("SaveScreenshots", "RefreshMs", 1500), 250, 60000);
@@ -327,6 +370,15 @@ namespace shared::common
 		log("Config", std::format("Hair: Brightness={:.2f}", hair.brightness));
 		log("Config", std::format("VATS: Enabled={} SampleRadius={:.1f} SampleCount={}",
 			vats.enabled ? 1 : 0, vats.sample_radius, vats.sample_count));
+		log("Config", std::format("Scopes: PathTraced={} AlignAim={} AlignSmoothing={:.3f} AlignStrength={:.2f} "
+			"VisionKey={} VisionAllModes={} GamepadVisionButtons=0x{:04X} VariableZoomAll={} ForceFirstPerson={} "
+			"PeripheralBlur={:.2f} Sounds={}", scopes.path_traced ? 1 : 0, scopes.align_aim ? 1 : 0,
+			scopes.align_smoothing, scopes.align_strength, scopes.vision_key, scopes.vision_all_modes ? 1 : 0,
+			scopes.gamepad_vision_buttons, scopes.variable_zoom_all ? 1 : 0, scopes.force_first_person ? 1 : 0,
+			scopes.peripheral_blur, scopes.sounds ? 1 : 0));
+		log("Config", std::format("WeaponMotion: Enabled={} Ironsights={} Breathing={:.2f} Inertia={:.2f} Bob={:.2f} "
+			"Recoil={:.2f}", weapon_motion.enabled ? 1 : 0, weapon_motion.ironsights ? 1 : 0, weapon_motion.breathing,
+			weapon_motion.inertia, weapon_motion.bob, weapon_motion.recoil));
 		log("Config", std::format("SaveScreenshots: Enabled={} RefreshMs={}", save_screenshots.enabled ? 1 : 0,
 			save_screenshots.refresh_ms));
 		log("Config", std::format("ScreenSpace: HideScreenSpaceDraws={} ScreenSpaceLog={}",

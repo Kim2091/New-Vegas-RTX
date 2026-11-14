@@ -10,6 +10,7 @@
 #include "api_hair_bake.hpp"
 #include "scene_graph.hpp"
 #include "stable_origin.hpp"
+#include "scopes.hpp"
 
 #include "shared/common/ffp_state.hpp"
 #include "shared/common/ps_reflect.hpp"
@@ -784,7 +785,8 @@ namespace comp::game::api_submit
 			// First-person arms: VIEW_MODEL, with the frame's view-model camera
 			// ([RemixApi] ViewModelCamera; 0 when off or not first-person). A
 			// folded arm is already placed for the world camera.
-			ii.categoryFlags = mat.categories | decal_categories | (folded ? 0u : api_camera::view_model_categories(dev));
+			ii.categoryFlags = mat.categories | decal_categories | (folded ? 0u : api_camera::view_model_categories(dev)) |
+				scopes::actor_tags(scene_graph::current_geometry());
 			ii.mesh = sm.mesh;
 			// The anchor in render units. The bones stay in FNV units: the
 			// instance transform scales the skinned mesh as a whole.
@@ -795,6 +797,9 @@ namespace comp::game::api_submit
 				ii.transform.matrix[r][r] = static_cast<float>(s);
 				ii.transform.matrix[r][3] = static_cast<float>(anchor[r] * s);
 			}
+			// The first-person arms move with the weapon motion (the Pip-Boy's
+			// own arm, folded, does not).
+			if (!folded && game::uses_viewmodel_projection()) scopes::motion_apply(ii.transform);
 			ii.doubleSided = double_sided_for_cull(dev) ? 1 : 0;
 			if (b->DrawInstance(&ii) != REMIXAPI_ERROR_CODE_SUCCESS)
 			{

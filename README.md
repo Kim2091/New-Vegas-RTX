@@ -61,7 +61,8 @@ The wrapper is built on xoxor4d's
    `remix-comp.ini` into the game folder.
 3. Copy `fnv_remix_nvse.dll` and `fnv_remix_nvse.ini` into
    `Data\NVSE\Plugins\`. The plugin must come from the same build as
-   `d3d9.dll`.
+   `d3d9.dll`. Copy the build's `Data\Config\NewVegasRTX\Scopes\` folder into
+   the game's `Data` folder too (the scope lens entries).
 4. Start the game.
 
 The game loads the wrapper as `d3d9.dll`, and the wrapper loads
@@ -119,6 +120,235 @@ The engine monitor reads `fnv_remix_nvse.ini` next to its DLL.
 
 **F4** opens the wrapper's developer overlay (draw routing state and
 statistics).
+
+### Path-traced scopes
+
+With **Path-traced scopes** on (`[Scopes] PathTraced`, default on, in the
+Alt+X menu), aiming a scoped weapon that has a lens entry keeps the world and
+the weapon on screen: the gun is raised in its ironsights pose and the runtime
+draws a path-traced lens in the scope itself, through which the world is
+magnified. There is no 2D overlay, no hidden weapon, no scissored view and no
+camera zoom. Weapons without an entry keep the game's own scopes.
+
+- **Which weapons:** a gun whose scope the game would show (the Has Scope
+  flag and a scope model, and when the scope comes from a weapon mod, that mod
+  installed) and that has a lens entry for its installed mods, and the
+  binoculars (below). A camera (a scope, no projectile, but film as ammo)
+  keeps the game's overlay.
+- **The lens:** placed from the entry on the first-person weapon node, so it
+  moves with the gun. Its magnification is the entry's, or by default the zoom
+  the game would have applied: `tan(fDefaultWorldFOV / 2) / tan(scopeFOV / 2)`,
+  where `scopeFOV` is the weapon's sight FOV minus an installed zoom mod's
+  value (whatever supplies the scope, as the game's own zoom does). Reflex
+  sights keep that magnification too. First person only.
+- **Zoom:** while the lens is up, the mouse wheel or the d-pad (up / down)
+  zooms between the entry's `MinMagnification` and `MaxMagnification`, and the
+  game sees neither. Without a range, telescopic lenses zoom from their
+  default magnification up to three times it (`[Scopes] VariableZoomAll`,
+  default on); otherwise the zoom is fixed. Each aim starts at the default
+  magnification. Zoom steps click with the game's `UIMenuPrevNext` sound.
+- **Vision modes:** night by default on scopes with night vision (flags2
+  `0x1000`; the game's own night-vision image-space effect stays off for lens
+  weapons), unless the entry's `VisionMode` says otherwise. `[Scopes]
+  VisionKey` (default N) or `GamepadVisionButtons` (default d-pad right)
+  cycles the weapon's allowed modes (the entry's `VisionModes`; without it
+  none and its default mode) while aiming; with `VisionAllModes` it cycles
+  none, night and thermal on every lens. Which weapon allows which modes:
+  [docs/scope-vision-modes.md](docs/scope-vision-modes.md). Switching plays the game's
+  `UIPipBoyLightOn` / `UIPipBoyLightOff` (`[Scopes] Sounds`).
+  Thermal and `HighlightHostiles` read per-actor tags the wrapper puts on the
+  skinned actors it sends: living actors are heat sources, hostile ones
+  (in combat with the player, or hostile on the compass) are highlighted.
+- **Crosshair:** the HUD crosshair is hidden while a lens is up; the lens
+  draws its own reticle.
+- **Point of aim** (`[Scopes] AimMode`): the game's first-person shot flies
+  along the player's view, from the camera while a scope is aimed, not along
+  the gun.
+  - `realistic` (default): the image follows the swaying scope, and while a
+    lens weapon is aimed through its lens the shot flies along the scope's
+    axis from its objective instead, so the reticle marks where it goes. The
+    game's spread still applies; NPCs, third person, VATS and other weapons
+    are unchanged.
+  - `view`: the lens looks along the view, where the game's own shot goes,
+    while the eyepiece stays on the swaying scope.
+- **Weapon motion** (`[WeaponMotion]`, default on): while aiming in first
+  person the gun has a small motion of its own, and the lens, the eye point
+  and the realistic shot move with it: a slow breathing sway (larger after
+  running, on low action points, with crippled arms or low Agility), a lag
+  behind turns, a walk / run bob and the recoil of each shot. Each has a
+  strength; `Ironsights` also applies it without a scope. It fades in after
+  the aim-in; the eye follows the motion with `AlignSmoothing` (default
+  0.45 s), so the scope moves against the eye and settles back to center.
+- **Lens at the hip** (`[Scopes] LensAlways`, default on): the held
+  scope's lens is there whenever the gun is drawn in first person, with no
+  menu and the Pip-Boy closed, at its magnification; from the hip the eye
+  sees it off axis, as a real scope looks. Vision modes, highlighting, the
+  rangefinder, peripheral blur, the zoom keys and the realistic shot start
+  once aimed and lined up; the zoom you set stays while hip firing.
+- **Aim-in:** the gun comes up as the game animates it, and the eye slides
+  from the camera onto the scope's eye point as the scope's axis lines up
+  with the view (from about 9 degrees off to about 1).
+- **Parallax and glass:** the reticle is focused at a distance (`[Scopes]
+  Parallax`; an entry's `ParallaxDistance`, else 100 m on telescopic scopes),
+  and the glass shows glare and dirt (`GlassEffects`, `GlareStrength` 0.5,
+  `DirtStrength` 0.2 unless an entry sets its own).
+- **Night and thermal brightness:** with a vision mode on, the wheel with
+  Shift (`BrightnessKey`), or the d-pad with the left shoulder
+  (`GamepadBrightnessButtons`), changes the brightness from 0.25x to 4x in
+  1.25x steps, kept per weapon for the session. The plain wheel still zooms.
+- **Third person:** aiming a lens weapon in third person switches to first
+  person for the aim and back after (`[Scopes] ForceFirstPerson`, default on).
+- **Peripheral blur:** `[Scopes] PeripheralBlur` (0..1) blurs the view outside
+  the lens while it is up (`rtx.lens.peripheralBlur`).
+- **Aim alignment** (`[Scopes] AlignAim`, default on): while aiming, the
+  first-person view sits at the entry's eye point (`EyepieceCenter` minus
+  `EyeRelief` along `Axis`), so the eye looks down the scope. It uses the
+  engine's own sighting-node path (`bTrueIronSights`): the wrapper points the
+  player's sighting node at that point while the lens exists. The eye stays
+  on the eye point as the game poses the gun (raising it, walking, turning)
+  and follows the weapon motion's offset (`AlignSmoothing`, seconds, default
+  0.45; 0 = locked), so sway and recoil move the scope against the eye.
+  `AlignStrength` (0..1, default 1) blends from the weapon's ironsights pose
+  to the eye point. `AimDebugLog=1` logs the alignment every frame for the
+  first 2 s of each aim.
+- **Needs:** a runtime whose bridge client supports
+  `remixapi_CameraInfoLensEXT` with its accent, edge and night-tint fields
+  (the log says `[Scopes] the bridge client forwards CameraInfoLensEXT ...` or
+  `does NOT`),
+  the engine monitor plugin (EditorIDs are read from the plugin files in its
+  load order) and `[RemixApi] FallbackCamera=1`, since the lens rides on that
+  camera. The wrapper sets `rtx.lens.enable` on the first lens.
+
+#### Lens entries
+
+One file per weapon, `Data\Config\NewVegasRTX\Scopes\<EditorID>.ini`, so a
+mod adds or replaces a weapon's lens by shipping one file. The wrapper ships
+presets for the vanilla and DLC scoped weapons. Values are in the
+first-person weapon node's space:
+`+X` toward the muzzle, `+Y` up, game units (about 1.43 cm).
+
+```ini
+[Lens]
+EyepieceCenter = 1.16, 10.02, 0
+Axis = 1, 0, 0
+Up = 0, 1, 0
+EyepieceRadius = 0.89
+ObjectiveDistance = 24.6
+ObjectiveRadius = 0.95
+EyeRelief = 5.6
+Reticle = duplex
+```
+
+`[Lens]` is the weapon's entry. `[Lens.<slots>]` is an entry for one
+combination of installed weapon mods, written as the installed slot numbers
+(`[Lens.2]`, `[Lens.13]`, `[Lens.123]`, `[Lens.0]` for none); its keys take
+over `[Lens]`'s one by one. A key neither section gives has its default:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `EyepieceCenter` | x, y, z of the eyepiece disc's center | 0, 0, 0 |
+| `Axis` | optical axis, from the eye toward the objective | 1, 0, 0 |
+| `Up` | the reticle's up | 0, 1, 0 |
+| `EyepieceRadius` | | 0.9 |
+| `ObjectiveDistance` | from the eyepiece along the axis | 20 |
+| `ObjectiveRadius` | | 1 |
+| `EyeRelief` | the eye's distance behind the eyepiece | 5.6 |
+| `Magnification` | 0 = the game's own zoom for the weapon | 0 |
+| `FieldStop` | degrees | 18 |
+| `Reticle` | `none`, `crosshair`, `duplex`, `dot`, `circledot`, `mildot`, `german`, `drop`, `stadia`, `frame`, `grid` or `dial` | `duplex` |
+| `ReticleColor` | r, g, b | 0, 0, 0 |
+| `ReticleRadiance` | 0 = dark; above 0 it glows | 0 |
+| `ReticleLineWidth` | half-width, a fraction of the field stop radius | 0.004 |
+| `Tint` | the glass's r, g, b | 0.92, 0.92, 0.92 |
+| `Kind` | `telescopic` (magnified, exit pupil) or `reflex` (a window with the reticle at infinity: holographic and red-dot sights) | `telescopic` |
+| `Aperture` | `circle` (radius `EyepieceRadius`), `rectangle` (`EyepieceRadius` half high) or `binocular` (two circles of radius `EyepieceRadius`) | `circle` |
+| `ApertureAspect` | a rectangle's width over its height; for `binocular`, each circle's center from the axis in radii | 1 |
+| `VisionMode` | `none`, `night` or `thermal` | night on scopes with night vision, else none |
+| `VisionModes` | the modes the vision key cycles, in order, any of `none, night, thermal` (the starting `VisionMode` is added first if missing); `VisionAllModes=1` overrides it with all three | none and the default mode |
+| `HighlightHostiles` | 1 = outline hostile actors in the lens | 0 |
+| `MinMagnification` | the mouse wheel's lowest zoom; 0 = the default magnification | 0 |
+| `MaxMagnification` | the mouse wheel's highest zoom; 0 = the default range (`VariableZoomAll`) or fixed | 0 |
+| `ReticleAccentColor` | r, g, b of the second reticle color (mil-dots, center dots) | 0, 0, 0 |
+| `ReticleAccentRadiance` | 0 = unlit ink; above 0 the accent glows | 0 |
+| `EdgeGlowColor` | r, g, b of a glow ring at the field stop | 0, 0, 0 |
+| `EdgeGlowStrength` | 0 = no ring | 0 |
+| `EdgeShade` | 0..1, darkening toward the field stop | 0 |
+| `EdgeTint` | r, g, b of a colored vignette toward the field stop; 0, 0, 0 = none | 0, 0, 0 |
+| `NightTint` | r, g, b of the night-vision phosphor; 0, 0, 0 = the runtime's | 0, 0, 0 |
+| `NightGain` | a multiplier on the night-vision gain; 0 = 1 | 0 |
+| `Markings` | `labels` (the reticle style's scale numbers), `rangefinder` (a range readout in meters along the axis) or `labels,rangefinder`; `[Scopes] RangefinderAll` adds the rangefinder to every lens | none |
+| `ReticlePlane` | `second` (the reticle keeps its size at any zoom) or `first` (it grows with the zoom from the default magnification) | `second` |
+| `ReticleTexture` | a .dds image whose alpha is the reticle, relative to the game's `Data` folder (e.g. `textures\weapons\scope\...`) or absolute; it covers the field stop (-1..1 across, the aperture aspect wide on a rectangle). A missing file, another format or a non-ASCII path keeps `Reticle` | none |
+| `MarkingColor` | r, g, b of the labels and the rangefinder; 0, 0, 0 = the accent's color. Not given: `[Scopes] MarkingColorR/G/B` with `MarkingRadiance` (red by default) | `[Scopes]` |
+| `MarkingRadiance` | with `MarkingColor`: 0 = the accent's lit or ink look, above 0 lit | 0 |
+| `MarkingOpacity` | 0..1, how much the markings cover; 0 = opaque | 0 |
+| `ParallaxDistance` | meters the reticle is focused at; 0 = none | 100 on telescopic scopes, 0 on reflex sights |
+| `GlareStrength` | 0..1, glare on the glass | `[Scopes] GlareStrength` |
+| `DirtStrength` | 0..1, dirt on the glass | `[Scopes] DirtStrength` |
+| `Grain` | `off` = no film grain on the lens (night vision and the glass keep their other effects); needs a runtime with the glass fields | `on` |
+| `Node` | a node of the first-person weapon model, by name, whose space the values are in (for a part that moves on its own, as Red Glare's `##RGScope`); the model's root when not given or not found | the root |
+
+**Scope editor:** the Alt+X menu's **Scope editor** section edits the
+equipped scoped weapon's entry live (its **Editing** line names the weapon,
+its installed mods and the section). Changing a value on a weapon without an
+entry creates one. **Only for these weapon mods** sends the values to the
+installed combination's section instead of `[Lens]`. **Save scope** writes the
+file; **Reload scope files** reads every file again.
+
+- **Engine hooks** (installed at startup when the setting is on; each one
+  passes through for anything but a weapon with a lens entry):
+  - the scope model attach (`0x77F2F0`): the scope model is not attached;
+  - the HUD scoped state (`0x77F3C0`): stays off, so no overlay and no
+    scissor;
+  - `Actor::SetAiming`'s scope model test before the first-person cull
+    (`0x8BB826`): the weapon is not hidden;
+  - `SetAiming`'s ScopeFromMod test before the ironsights anim (`0x8BBB4A`)
+    and the weapon's "first-person ironsights anims" test (`0x8B2BF0`): the
+    ironsights pose, including for records that turn ironsights anims off;
+  - `PlayerCharacter::UpdateFOV`'s aiming test before the ironsights zoom
+    (`0x95E043`): no zoom;
+  - the HUD reticle state's sighting-node test (`0x771B67`): the crosshair
+    hides while a lens weapon is aimed in first person, as the engine hides
+    it for a true-ironsights sighting node; the center reticle tile is also
+    kept hidden every frame the lens is up;
+  - the player update's ScopeHasNightVision test (`0x93F098`): no vanilla
+    scope night-vision effect for lens weapons;
+  - `OSInputGlobals::Poll` (`0xA23010`): the mouse wheel goes to the lens's
+    zoom while it is up;
+  - the game's `XInputGetState` import (`xinput1_3.dll` ordinal 2): the d-pad
+    up / down and the vision buttons go to the lens while it is up;
+  - the first-person camera setup's sit / sleep test before the sighting
+    node (`0x874ECE`, `0x87565F`): with `AlignAim`, the eye point is used
+    while a lens weapon is aimed in first person.
+- **Binoculars:** a weapon with a scope model and neither a projectile nor
+  ammo (the binoculars; a camera has film as ammo, so it is not one) needs no
+  entry. While aimed in first person it shows one camera-attached lens on the
+  view axis with the binocular aperture (two overlapping circles, each about
+  42% of half the screen height, the view black outside them), magnified by
+  the record's zoom, with no overlay, no zoom and no crosshair. Vision modes
+  and the wheel zoom work as on scopes; the alignment does not apply.
+- **Stays vanilla for now:** a weapon's scope effect shader (EFSD).
+- A change of the setting applies at the next aim; whether the scope model
+  is attached follows at the next equip.
+- **Presets for other mods' weapons:** lens files in subfolders of
+  `Data\Config\NewVegasRTX\Scopes\` win over the base folder; see
+  [docs/scope-presets-for-mod-authors.md](docs/scope-presets-for-mod-authors.md)
+  for the format, the folder rule and the in-game editor.
+
+#### Compatibility
+
+- Weapons without a lens file keep the game's own scope.
+- A mod that gives a scoped weapon another first-person mesh falls back to the
+  game's scope for it, unless it ships a lens file for that mesh (the
+  presets' `Models` check).
+- Weapon sway or inertia mods add to the wrapper's own weapon motion: turn
+  `[WeaponMotion] Enabled` off with one.
+- Picture-in-picture scope mods draw their own scope image and conflict with
+  the lens: use one or the other.
+- If another mod changes where shots come from, use `[Scopes] AimMode = view`.
+- When another mod holds a piece of game code the wrapper hooks in a way it
+  cannot chain, only the feature that needs it stays off, and the log says
+  which (`Scopes:` lines at startup).
 
 ## Logs and bug reports
 

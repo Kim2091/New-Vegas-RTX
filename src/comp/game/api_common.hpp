@@ -178,6 +178,10 @@ namespace comp::game::api
 	// the image on every call; callers cache the answer.
 	bool bridge_client_has(const char* marker);
 
+	// The same for a message that starts with `prefix` and also contains
+	// `also` (one C string in the image).
+	bool bridge_client_has_line(const char* prefix, const char* also);
+
 	// The draw being made keeps its D3D9 route: a first-person draw (the
 	// viewmodel projection) while the Pip-Boy is not closed (the engine
 	// monitor's state: opening, open or closing), which covers the Pip-Boy's

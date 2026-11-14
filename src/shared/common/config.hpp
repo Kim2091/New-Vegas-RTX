@@ -540,6 +540,90 @@ namespace shared::common
 			int sample_count = 7;
 		} vats;
 
+		// [Scopes]: weapon scopes drawn as a path-traced lens (game/scopes.*).
+		struct scopes_settings
+		{
+			// Aiming a scoped weapon that has a lens entry raises it in its
+			// ironsights pose and the runtime draws the lens in the scope,
+			// without the 2D overlay, the hidden weapon, the scissor or the
+			// zoom. Needs a runtime whose bridge forwards
+			// remixapi_CameraInfoLensEXT; with another runtime, or off, scopes
+			// are the game's own.
+			bool path_traced = true;
+			// While a lens weapon is aimed, the first-person camera sits at the
+			// entry's eye point, so the eye looks down the scope.
+			bool align_aim = true;
+			// Seconds the eye takes to follow the scope's eye point (a time
+			// constant, frame-rate independent), so the gun's sway shows
+			// against the eye. 0 = locked to it.
+			float align_smoothing = 0.45f;
+			// 0 = the weapon's ironsights pose, 1 = the followed eye point.
+			float align_strength = 1.0f;
+			// Virtual-key code that cycles a lens's vision mode while it is up
+			// (78 = N; 0 = no key).
+			int vision_key = 78;
+			// The vision key cycles none, night and thermal on every lens, not
+			// only none and the lens's own mode.
+			bool vision_all_modes = false;
+			// XInput button mask that switches the vision mode while a lens is
+			// up (0x0008 = d-pad right; buttons together for a combo; 0 = none).
+			// D-pad up / down zoom. While a lens is up the game sees none of
+			// these buttons.
+			int gamepad_vision_buttons = 0x0008;
+			// Telescopic lenses without their own zoom range zoom from half to
+			// one and a half times their default magnification.
+			bool variable_zoom_all = true;
+			// Aiming a lens weapon in third person switches to first person
+			// for the aim and back after.
+			bool force_first_person = true;
+			// LensAlways: the held scope's lens also at the hip (first person,
+			// in play, no menu, Pip-Boy closed); the aim-only features (vision,
+			// highlighting, rangefinder, peripheral blur, zoom input) still only
+			// once aimed.
+			bool lens_always = true;
+			// rtx.lens.peripheralBlur: blur outside the lens while it is up, 0..1.
+			float peripheral_blur = 0.0f;
+			// Zoom steps and vision mode switches play the game's own UI sounds.
+			bool sounds = true;
+			bool aim_debug_log = false;   // AimDebugLog: per-frame alignment values for the first 2 s of each aim
+			// Every lens shows a rangefinder readout, not only those whose entry
+			// asks for one.
+			bool rangefinder_all = false;
+			// 0 realistic: the lens follows the scope and the player's shots fly
+			// along the scope's axis from the scope. 1 view: the lens looks along
+			// the view, where the game's shots go.
+			int aim_mode = 0;
+			// Parallax: the reticle is focused at a distance (the entry's, else
+			// 100 m on telescopic scopes); off, never.
+			bool parallax = true;
+			// Glare and dirt on the lens glass, unless an entry sets its own.
+			bool glass_effects = true;
+			float glare_strength = 0.5f;
+			float dirt_strength = 0.2f;
+			// Held with the wheel (or with the d-pad: these XInput buttons) while
+			// a vision mode is on, the brightness instead of the zoom (16 =
+			// Shift; 0x0100 = left shoulder).
+			int brightness_key = 0x10;
+			int gamepad_brightness_buttons = 0x0100;
+			// The markings' (labels, rangefinder) color and radiance on lenses
+			// whose entry gives no MarkingColor: the red of the gauss labels.
+			float marking_color[3] = { 1.0f, 0.0f, 0.0f };
+			float marking_radiance = 2.0f;
+		} scopes;
+
+		// [WeaponMotion]: the first-person weapon's own motion while aiming
+		// (game/scopes.*): breathing sway, the lag behind turns, the bob and
+		// the recoil, each a strength (1 = the default, 0 = none).
+		struct weapon_motion_settings
+		{
+			bool enabled = true;
+			bool ironsights = true;    // also on weapons without a lens (ironsights)
+			float breathing = 1.0f;
+			float inertia = 1.0f;
+			float bob = 1.0f;
+			float recoil = 1.0f;
+		} weapon_motion;
+
 		// [SaveScreenshots]: the picture a save stores (game/save_thumbnail.*).
 		struct save_screenshot_settings
 		{

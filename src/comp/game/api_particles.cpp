@@ -6,6 +6,7 @@
 #include "api_camera.hpp"
 #include "scene_graph.hpp"
 #include "vs_expand.hpp"
+#include "scopes.hpp"
 
 #include "shared/common/ffp_state.hpp"
 #include "shared/common/ps_reflect.hpp"
@@ -571,6 +572,8 @@ namespace comp::game::api_submit
 			if (vm) ii.categoryFlags |= api_camera::view_model_categories(dev);
 			ii.mesh = sys.mesh;
 			ii.transform = frame_transform(w);
+			// First-person particles (muzzle flashes) move with the weapon motion.
+			if (vm) scopes::motion_apply(ii.transform);
 			ii.doubleSided = 1;   // camera-facing cards
 			if (b->DrawInstance(&ii) != REMIXAPI_ERROR_CODE_SUCCESS) return refuse(Reason::Submit);
 			st.draws++;

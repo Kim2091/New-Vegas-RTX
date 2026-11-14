@@ -70,6 +70,9 @@ tracks NiDX9SourceTextureData's slot so a later change is logged.
   while the property still holds what was read (plugin `decals`), and the
   menu-background capture bytes are written only while the capture code is
   vanilla (`menu_bg`).
+- The player's sighting node (PlayerCharacter +0xE34) points at the
+  wrapper's aim alignment point only while a lens weapon is aimed
+  (`scopes`), and is cleared only while it still holds that point.
 
 ## Deliberate exceptions
 

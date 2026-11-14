@@ -60,6 +60,19 @@ namespace fnv_exe
 		Code save_screenshot_call;     // the save header writer 0x84D4B0's call to the save screenshot capture 0x878F60: NiPixelData* cdecl(int* w, int* h, const char* bmp)
 		Code screenshot_key_call;      // Main_OnIdle's call to the Print Screen capture 0x878860 (ScreenShotN.bmp from the back buffer): cdecl(int)
 		Code settings_write;          // SettingCollection: thiscall(this, const char* path) writes its values to an INI file (detour)
+		// Path-traced scopes (comp/game/scopes.hpp).
+		Code scope_model_attach;       // HUDMainMenu: attaches a weapon's scope model (TESModel*, weapon +0x1E8) to the HUD 3D node: void cdecl(TESModel*) (detour)
+		Code scope_set_visible;        // HUDMainMenu: the scoped state (HUD +0x1FC) and the HUD 3D node's cull: void cdecl(bool) (detour)
+		Code aim_cull_model_call;      // Actor::SetAiming's call to TESModel's path length on the weapon's scope model, the test before the first-person cull (thunk)
+		Code aim_scope_mod_call;       // Actor::SetAiming's call to TESObjectWEAP::IsScopeFromMod, the test before the first-person ironsights +3 (thunk)
+		Code weap_use_1st_is_anims;    // TESObjectWEAP: flags1 0x40 clear, the weapon has first-person ironsights anims: bool thiscall(weap) (detour)
+		Code fov_zoom_aiming_call;     // PlayerCharacter::UpdateFOV's call to Actor::IsAiming that gates the ironsights zoom target (thunk)
+		Code hud_sighting_call;        // HUDMainMenu reticle state 0x771700's call to the sighting node getter 0x7721A0; set, it clears visibility bit 0x40, the center reticle tile HUD +0x12C (thunk)
+		Code nv_scope_flag_call;       // the player update's call to TESObjectWEAP's ScopeHasNightVision 0x9442C0 (flags2 0x1000) before the scope night-vision IMAD 0x8CD8C (thunk)
+		Code input_poll;               // OSInputGlobals::Poll: DirectInput keyboard / mouse state, the mouse's DIMOUSESTATE at +0x1B24 (lZ +0x1B2C): thiscall(osig) (detour)
+		Code fp_sight_block_call_a;    // the first-person camera setup 0x874C10's call to 0x8A8870 (the player's sit / sleep state 9 or 0xE..0x11), which skips the sighting node (thunk)
+		Code fp_sight_block_call_b;    // the same test in 0x875110 (thunk)
+		Code shot_pitch_call;          // TESObjectWEAP fire 0x523150's call to the player's pitch 0x931D70 (first person; the heading is at its [ebp-0x20], the scoped origin at [ebp-0x44]) (thunk)
 
 		// ---- Engine functions ----
 		uintptr_t dec_ref_count;       // NiRefObject::DecRefCount
@@ -69,6 +82,18 @@ namespace fnv_exe
 		uintptr_t pick_bypass_set;     // sets it: void cdecl(bool)
 		uintptr_t ni_alloc;            // NiAlloc: void* cdecl(size_t)
 		uintptr_t pixel_data_ctor;     // NiPixelData's constructor: thiscall(this, u32 w, u32 h, const NiPixelFormat*, u32 mips, u32 faces), 0x74 bytes
+		uintptr_t actor_is_aiming;     // Actor::IsAiming: bool thiscall(actor)
+		uintptr_t model_path_length;   // TESModel's model path length: u32 thiscall(TESModel*)
+		uintptr_t item_mod_effect;     // an inventory entry's installed weapon mod with this effect: bool thiscall(entry, u8 effect, float* value1), ret 8
+		uintptr_t xlist_weapon_mod;    // ExtraDataList: the weapon mod slot bit (1, 2, 4) is installed (ExtraWeaponModFlags 0x8D): bool thiscall(xlist, u8 bit), ret 4
+		uintptr_t sighting_anim_block; // PlayerCharacter: an anim state in which the first-person camera ignores the sighting node: bool thiscall(pc)
+		uintptr_t sighting_cam_block;  // the camera state object's own block on the sighting node (its +8 is set): bool thiscall(state)
+		uintptr_t actor_in_combat_with;// Actor::IsInCombatWith: bool thiscall(actor, Actor* target), ret 4 (read-only)
+		uintptr_t tile_get_value;      // Tile::GetValue: float thiscall(tile, u32 trait), ret 4
+		uintptr_t tile_set_value;      // Tile: sets a trait from an int: void thiscall(tile, u32 trait, int value), ret 8
+		uintptr_t sound_by_name;       // BSAudioManager: a sound handle for a sound's editor ID: BSSoundHandle* thiscall(mgr, BSSoundHandle* out, const char* edid, u32 flags), ret 0xC
+		uintptr_t sound_play;          // BSSoundHandle::Play: bool thiscall(handle, u32), ret 4
+		uintptr_t player_set_pov;      // PlayerCharacter: first person (1) or third person (0), as the POV key does: bool thiscall(pc, bool), ret 4
 
 		// ---- xNVSE's event hook sites ----
 		Code xnvse_cell_state;         // cell SetState (OnCellStateChange)
@@ -126,6 +151,13 @@ namespace fnv_exe
 		uintptr_t screen_height;       // u32, iSize H's value
 		uintptr_t pixel_format_rgb24;  // NiPixelFormat, RGB24
 		uintptr_t moon_phase;          // u32, both moons' phase index (0 full, 2 last quarter, 4 new, 6 first quarter), set by Sky_Update 0x63AC70 once per day
+		uintptr_t default_world_fov;   // Setting fDefaultWorldFOV; its float value is at +4
+		uintptr_t camera_state;        // the object 0x874C10 / 0x875110 ask (sighting_cam_block) before using the sighting node
+		uintptr_t main_camera;         // NiAVObject*, the main camera node 0x874C10 / 0x875110 offset the first-person camera from
+		uintptr_t hud_main_menu;       // HUDMainMenu*; +0x1BC the visibility mask, +0x12C the center reticle tile
+		uintptr_t process_lists;       // ProcessLists: +0x08 the objects array, +0x14 / +0x24 begin / end indices per process level
+		uintptr_t input_globals;       // OSInputGlobals*
+		uintptr_t audio_manager;       // BSAudioManager* (its getter 0x453A70)
 
 		// ---- Vtables ----
 		uintptr_t vtbl_ppl_shade;            // BSShaderPPLightingProperty
@@ -175,8 +207,22 @@ namespace fnv_exe
 		{ 0x0084D6B2, 5,  { 0xE8, 0xA9, 0xB8, 0x02, 0x00 } },
 		{ 0x00870545, 5,  { 0xE8, 0x16, 0x83, 0x00, 0x00 } },
 		{ 0x005E01B0, 6,  { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 } },
+		{ 0x0077F2F0, 6,  { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10 } },
+		{ 0x0077F3C0, 10, { 0x55, 0x8B, 0xEC, 0x83, 0x3D, 0xC0, 0x96, 0x1D, 0x01, 0x00 } },
+		{ 0x008BB826, 5,  { 0xE8, 0xB5, 0x16, 0xBD, 0xFF } },
+		{ 0x008BBB4A, 5,  { 0xE8, 0xE1, 0x14, 0xBF, 0xFF } },
+		{ 0x008B2BF0, 7,  { 0x55, 0x8B, 0xEC, 0x51, 0x89, 0x4D, 0xFC } },
+		{ 0x0095E043, 5,  { 0xE8, 0xC8, 0xDB, 0xF5, 0xFF } },
+		{ 0x00771B67, 5,  { 0xE8, 0x34, 0x06, 0x00, 0x00 } },
+		{ 0x0093F098, 5,  { 0xE8, 0x23, 0x52, 0x00, 0x00 } },
+		{ 0x00A23010, 6,  { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C } },
+		{ 0x00874ECE, 5,  { 0xE8, 0x9D, 0x39, 0x03, 0x00 } },
+		{ 0x0087565F, 5,  { 0xE8, 0x0C, 0x32, 0x03, 0x00 } },
+		{ 0x005237D0, 5,  { 0xE8, 0x9B, 0xE5, 0x40, 0x00 } },
 		// Engine functions
 		0x00401970, 0x0088C240, 0x008854D0, 0x00888960, 0x00C66230, 0x00AA13E0, 0x00A7C190,
+		0x008BBC10, 0x0048CEE0, 0x004BD8D0, 0x00418C00, 0x008A8870, 0x00525430,
+		0x008BC700, 0x00A011B0, 0x00700320, 0x00AD7550, 0x00AD8830, 0x00950110,
 		// xNVSE event hook sites
 		{ 0x004512A0, 5, { 0x55, 0x8B, 0xEC, 0x51, 0x89 } },
 		{ 0x005518A5, 5, { 0xE8, 0x26, 0x47, 0xED, 0xFF } },
@@ -206,6 +252,7 @@ namespace fnv_exe
 		0x011C73B4, 0x011F8E9C, 0x011CA9E8, 0x011CCEA8, 0x011D890A, 0x011DEA29, 0x011DED3C,
 		0x011C7A59, 0x011C7A58, 0x011C7A5C, 0x01189624, 0x011C7ADC, 0x011F917C, 0x011D9770,
 		0x011F3330, 0x011C3F2C, 0x011DB150, 0x011F21CC, 0x0118947C, 0x01189480, 0x011AA2E8, 0x011CCA80,
+		0x0120315C, 0x011F2250, 0x011E07D0, 0x011D96C0, 0x011E0E80, 0x011F35CC, 0x011F6D98,
 		// Vtables
 		0x010AE0D0, 0x010B9910, 0x010BCB60, 0x010AE670, 0x010BCC90, 0x010BCDC8,
 		0x0103168C, 0x010ED37C, 0x0108AA3C, 0x0107A2CC, 0x0109DD0C, 0x0109CB9C,

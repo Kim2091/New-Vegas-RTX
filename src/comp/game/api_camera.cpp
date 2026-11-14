@@ -2,6 +2,7 @@
 #include "api_camera.hpp"
 #include "stable_origin.hpp"
 #include "menu_scene.hpp"
+#include "scopes.hpp"
 
 #include "shared/common/config.hpp"
 #include "shared/common/ffp_state.hpp"
@@ -184,12 +185,17 @@ namespace comp::game::api_camera
 			events.sType = REMIXAPI_STRUCT_TYPE_CAMERA_INFO_FRAME_EVENTS_EXT;
 			events.flags = REMIXAPI_CAMERA_FRAME_EVENT_FALLBACK;
 
+			// The player's scope lens, in the same render frame (scopes.hpp).
+			remixapi_CameraInfoLensEXT lens = {};
+			if (scopes::lens(lens)) events.pNext = &lens;
+
 			remixapi_CameraInfo info = {};
 			info.sType = REMIXAPI_STRUCT_TYPE_CAMERA_INFO;
 			info.pNext = &events;
 			info.type = REMIXAPI_CAMERA_TYPE_WORLD;
 			std::memcpy(info.view, &v, sizeof(info.view));
 			std::memcpy(info.projection, &p, sizeof(info.projection));
+			if (events.pNext == &lens) scopes::lens_sent(v, lens);
 
 			const auto rc = api.m_bridge.SetupCamera(&info);
 			if (rc == REMIXAPI_ERROR_CODE_SUCCESS)

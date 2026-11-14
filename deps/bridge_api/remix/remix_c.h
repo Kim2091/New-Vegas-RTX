@@ -153,6 +153,7 @@ extern "C" {
     // Fork struct types (Remix Plus), as in the runtime's remix_c.h.
     REMIXAPI_STRUCT_TYPE_CAMERA_INFO_FRAME_EVENTS_EXT         = 0x4E560001,
     REMIXAPI_STRUCT_TYPE_ASSET_KEY_EXT                        = 0x4E560002,
+    REMIXAPI_STRUCT_TYPE_CAMERA_INFO_LENS_EXT                 = 0x4E560005,
     // Fork-only struct types live in a separate range so upstream additions can never collide with them.
     REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_TERRAIN_LAYERS_EXT     = 0x7F000001,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
@@ -573,6 +574,92 @@ extern "C" {
     const char*         assetName;
   } remixapi_AssetKeyEXT;
 
+  // Fork (as in the runtime's remix_c.h): chain on remixapi_CameraInfo -- one scope lens, sent with every SetupCamera
+  // it exists for (a frame without it has no lens). Several may be chained. Lengths in world units, positions and
+  // directions in world space. Needs rtx.lens.enable.
+  #define REMIXAPI_CAMERA_LENS_RETICLE_NONE      0u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_CROSSHAIR 1u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_DUPLEX    2u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_DOT       3u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_CIRCLE_DOT 4u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_MIL_DOT   5u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_GERMAN    6u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_DROP      7u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_STADIA    8u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_FRAME     9u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_GRID      10u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_DIAL      11u
+  #define REMIXAPI_CAMERA_LENS_RETICLE_TEXTURE   12u
+  #define REMIXAPI_CAMERA_LENS_KIND_TELESCOPIC   0u
+  #define REMIXAPI_CAMERA_LENS_KIND_REFLEX       1u
+  #define REMIXAPI_CAMERA_LENS_APERTURE_CIRCLE   0u
+  #define REMIXAPI_CAMERA_LENS_APERTURE_RECTANGLE 1u
+  // BINOCULAR: the union of two circles of radius eyepieceRadius whose centers sit apertureAspect * eyepieceRadius to
+  // the left and right of the axis (below 1 they overlap). One magnified image, centered on the axis, fills both.
+  #define REMIXAPI_CAMERA_LENS_APERTURE_BINOCULAR 2u
+  #define REMIXAPI_CAMERA_LENS_VISION_NONE       0u
+  #define REMIXAPI_CAMERA_LENS_VISION_NIGHT      1u
+  #define REMIXAPI_CAMERA_LENS_VISION_THERMAL    2u
+  #define REMIXAPI_CAMERA_LENS_FLAG_HIGHLIGHT_HOSTILES 0x1u
+  // While a lens with this flag is active, everything outside every lens is black, as behind a binocular or scope
+  // mask, and the lens windows get a soft edge that fades into it. The HUD drawn after the frame stays visible.
+  #define REMIXAPI_CAMERA_LENS_FLAG_OCCLUDE_OUTSIDE   0x2u
+  // The reticle is in the first focal plane: it grows with the magnification, by magnification over the reference
+  // magnification (referenceMagnification, else minMagnification). Without either, it keeps its size. The rangefinder
+  // readout keeps its size.
+  #define REMIXAPI_CAMERA_LENS_FLAG_FIRST_FOCAL_PLANE 0x4u
+  // The lens shows no film grain; its other effects stay.
+  #define REMIXAPI_CAMERA_LENS_FLAG_NO_GRAIN          0x8u
+  // TEXTURE: the reticle is the image at reticleTexture, a file path the runtime loads in the background and keeps,
+  // or "0x<16 hex digits>" for a texture made with remixapi_CreateTexture. The image covers the square from -1 to 1 of
+  // reticle space (the field stop's radius is 1), or from -apertureAspect to apertureAspect across for a rectangle.
+  // Its alpha is the ink, drawn like the other reticles in reticleColor (unlit) or emitted (lit). Its color is not used.
+  // Nothing is drawn until the image is loaded.
+  #define REMIXAPI_CAMERA_LENS_MARKING_LABELS      0x1u
+  #define REMIXAPI_CAMERA_LENS_MARKING_RANGEFINDER 0x2u
+  typedef struct remixapi_CameraInfoLensEXT {
+    remixapi_StructType sType;            // REMIXAPI_STRUCT_TYPE_CAMERA_INFO_LENS_EXT
+    void*               pNext;
+    uint64_t            id;               // nonzero, the same for the same lens across frames
+    remixapi_Float3D    eyepieceCenter;
+    remixapi_Float3D    axis;             // the optical axis, from the eye toward the objective
+    remixapi_Float3D    up;               // the reticle's up direction, need not be perpendicular to the axis
+    float               eyepieceRadius;
+    float               objectiveDistance; // from the eyepiece to the objective along the axis
+    float               objectiveRadius;
+    float               magnification;
+    float               fieldStopDegrees; // the apparent field stop half-angle
+    float               eyeRelief;        // the ideal eye distance behind the eyepiece
+    remixapi_Float3D    tint;             // the transmission tint of the glass
+    uint32_t            reticle;          // REMIXAPI_CAMERA_LENS_RETICLE_*
+    remixapi_Float3D    reticleColor;     // emitted when reticleRadiance is above 0, else ink transmittance
+    float               reticleRadiance;  // 0 draws a black reticle
+    float               reticleLineWidth; // the half-width of a line, as a fraction of the field stop radius
+    uint32_t            kind;             // REMIXAPI_CAMERA_LENS_KIND_*
+    uint32_t            aperture;         // REMIXAPI_CAMERA_LENS_APERTURE_*
+    float               apertureAspect;   // the rectangle's width over its height, or a binocular circle's offset in radii
+    uint32_t            visionMode;       // REMIXAPI_CAMERA_LENS_VISION_*
+    uint32_t            lensFlags;        // REMIXAPI_CAMERA_LENS_FLAG_*
+    float               minMagnification; // the host's zoom range, 0 for a fixed zoom
+    remixapi_Float3D    reticleAccentColor;    // mil-dot dots and center dots
+    float               reticleAccentRadiance; // 0 draws the accent as unlit ink
+    remixapi_Float3D    edgeGlowColor;         // the glow ring at the field stop
+    float               edgeGlowStrength;      // 0 for no ring
+    float               edgeShade;             // 0..1, the darkening toward the field stop
+    remixapi_Float3D    edgeTint;              // multiplied in toward the field stop, zero for none
+    remixapi_Float3D    nightTint;             // the night vision phosphor color, zero for the runtime's
+    float               nightGain;             // a multiplier on the metered night vision gain, 0 for 1
+    uint32_t            markings;              // REMIXAPI_CAMERA_LENS_MARKING_*
+    float               referenceMagnification; // the magnification a first focal plane reticle has its size at
+    remixapi_Path       reticleTexture;        // REMIXAPI_CAMERA_LENS_RETICLE_TEXTURE's image, null for none
+    remixapi_Float3D    markingColor;          // labels and the rangefinder; zero for the accent's color
+    float               markingRadiance;       // 0 follows the accent's lit or ink look; above 0 lit, a displayed value
+    float               markingOpacity;        // 0..1, a coverage multiplier for the markings; 0 for opaque
+    float               parallaxDistance;      // world units the reticle is focused at; 0 for no parallax
+    float               glareStrength;         // 0..1, glare on the glass; 0 for none
+    float               dirtStrength;          // 0..1, dirt on the glass; 0 for none
+  } remixapi_CameraInfoLensEXT;
+
   typedef struct remixapi_CameraInfo {
     remixapi_StructType sType;
     void*               pNext;
@@ -670,6 +757,9 @@ extern "C" {
     REMIXAPI_INSTANCE_CATEGORY_BIT_SMOOTH_NORMALS            = 1 << 24,
     REMIXAPI_INSTANCE_CATEGORY_BIT_HAIR_CARDS                = 1 << 25,
     REMIXAPI_INSTANCE_CATEGORY_BIT_VIEW_MODEL                = 1 << 26,
+    // Remix Plus instance tags for lens vision modes, from the top of the field.
+    REMIXAPI_INSTANCE_CATEGORY_BIT_HEAT_SOURCE               = 1 << 29,
+    REMIXAPI_INSTANCE_CATEGORY_BIT_HIGHLIGHT_HOSTILE         = 1 << 30,
   } remixapi_InstanceCategoryBit;
 
   typedef uint32_t remixapi_InstanceCategoryFlags;

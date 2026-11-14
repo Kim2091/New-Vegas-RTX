@@ -333,6 +333,11 @@ if "!CUSTOM_COMP!"=="1" (
     )
 )
 
+:: The shipped scope lens entries, under the game's Data folder layout.
+if exist "%ROOT%Data\Config\NewVegasRTX\Scopes" (
+    xcopy /y /i /q "%ROOT%Data\Config\NewVegasRTX\Scopes\*.ini" "%GAME_OUT%\Data\Config\NewVegasRTX\Scopes\" >nul
+)
+
 echo.
 echo === Build succeeded: %GAME_OUT%\d3d9.dll, %GAME_OUT%\NewVegasRTX-Reporter.exe ===
 exit /b 0

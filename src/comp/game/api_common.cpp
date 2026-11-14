@@ -734,7 +734,19 @@ namespace comp::game::api
 		// Searches the readable, non-executable sections of a loaded module
 		// for `needle`. No C++ objects here: __try can't share a frame with
 		// unwinding.
-		bool module_has_bytes_unguarded(const uint8_t* base, const char* needle, size_t n)
+		// The C string that starts at p[k], within len bytes, contains `also`.
+		bool line_contains(const uint8_t* p, size_t k, size_t len, const char* also)
+		{
+			if (!also) return true;
+			const size_t m = std::strlen(also);
+			size_t end = k;
+			while (end < len && p[end]) end++;
+			for (size_t i = k; i + m <= end; i++)
+				if (std::memcmp(p + i, also, m) == 0) return true;
+			return false;
+		}
+
+		bool module_has_bytes_unguarded(const uint8_t* base, const char* needle, size_t n, const char* also)
 		{
 			const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
 			if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
@@ -749,14 +761,16 @@ namespace comp::game::api
 				const size_t len = sec->Misc.VirtualSize;
 				if (len < n) continue;
 				for (size_t k = 0; k + n <= len; k++)
-					if (p[k] == static_cast<uint8_t>(needle[0]) && std::memcmp(p + k, needle, n) == 0) return true;
+					if (p[k] == static_cast<uint8_t>(needle[0]) && std::memcmp(p + k, needle, n) == 0 &&
+						line_contains(p, k, len, also))
+						return true;
 			}
 			return false;
 		}
 
-		bool module_has_bytes(const uint8_t* base, const char* needle, size_t n)
+		bool module_has_bytes(const uint8_t* base, const char* needle, size_t n, const char* also = nullptr)
 		{
-			__try { return module_has_bytes_unguarded(base, needle, n); }
+			__try { return module_has_bytes_unguarded(base, needle, n, also); }
 			__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 		}
 
@@ -766,6 +780,12 @@ namespace comp::game::api
 	{
 		const auto* base = reinterpret_cast<const uint8_t*>(shared::globals::d3d9_chain_module);
 		return base && marker && marker[0] && module_has_bytes(base, marker, std::strlen(marker));
+	}
+
+	bool bridge_client_has_line(const char* prefix, const char* also)
+	{
+		const auto* base = reinterpret_cast<const uint8_t*>(shared::globals::d3d9_chain_module);
+		return base && prefix && prefix[0] && module_has_bytes(base, prefix, std::strlen(prefix), also);
 	}
 
 	// The geometry being rendered hangs under the player's first-person node,
