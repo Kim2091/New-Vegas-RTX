@@ -22,7 +22,6 @@ namespace comp::game::stealth_field
 		constexpr const char* kInnerParts[] = { "eye", "mouth", "teeth", "tongue", "toungue" };
 		constexpr uint32_t kObjectName = 0x08;       // NiObjectNET::m_kName
 
-		constexpr uintptr_t kProcessManager = 0x11E0E80;
 		constexpr uint32_t kPmActorData = 0x08;      // Actor*[]
 		constexpr uint32_t kPmHighBegin = 0x14;      // level 0 (high process): [begin, end)
 		constexpr uint32_t kPmHighEnd = 0x24;
@@ -77,11 +76,12 @@ namespace comp::game::stealth_field
 			uintptr_t player = 0;
 			if (scene_graph::read_u32(fnv_exe::addr().player, player) && player) note_actor(player, true);
 
+			const uintptr_t lists = fnv_exe::addr().process_lists;
 			uintptr_t data = 0;
 			uint32_t begin = 0, end = 0;
-			if (scene_graph::read_u32(kProcessManager + kPmActorData, data) && data &&
-				scene_graph::read_u32(kProcessManager + kPmHighBegin, begin) &&
-				scene_graph::read_u32(kProcessManager + kPmHighEnd, end))
+			if (lists && scene_graph::read_u32(lists + kPmActorData, data) && data &&
+				scene_graph::read_u32(lists + kPmHighBegin, begin) &&
+				scene_graph::read_u32(lists + kPmHighEnd, end))
 			{
 				for (uint32_t i = begin; i < end && i - begin < kActorsMax; i++)
 				{

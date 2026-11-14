@@ -1,7 +1,7 @@
 #pragma once
 #include "api_common.hpp"
 
-// Stealth fields: Stealth Boys, stealth armour, the Invisibility effect
+// Stealth fields: Stealth Boys, stealth armor, the Invisibility effect
 // ([StealthField] in remix-comp.ini).
 //
 // The engine's look is a screen-space refraction, which never reaches the

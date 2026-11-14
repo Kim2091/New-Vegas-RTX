@@ -22,7 +22,6 @@ namespace comp::game::api::material
 		return true;
 	}
 
-
 	uint64_t key(const Desc& m)
 	{
 		Hash64 h;
