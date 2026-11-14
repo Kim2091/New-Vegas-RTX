@@ -4088,6 +4088,13 @@ namespace comp::game::scene_statics
 		return false;
 	}
 
+	void lifetime_counts(uint32_t& claimed, size_t& meshes, size_t& materials)
+	{
+		claimed = g_claimed;
+		meshes = g_meshes.size();
+		materials = g_mats.size();
+	}
+
 	bool claimed(uintptr_t geo)
 	{
 		if (!g_active || !geo) return false;

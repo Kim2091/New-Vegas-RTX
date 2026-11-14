@@ -10,6 +10,8 @@
 #include "scene_graph.hpp"
 #include "shared/fnv_exe.hpp"
 #include "tex_pool.hpp"
+#include "scene_statics.hpp"
+#include "shared/common/remix_api.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -167,6 +169,69 @@ namespace comp::game::api
 			return v;
 		}
 
+		// [Lifetime]: every API object the wrapper holds, by type (live, and
+		// created / destroyed since the last line), each feature's cache, the
+		// scene statics' claims, and the runtime's own VRAM figures when the
+		// bridge reports them (GetVramStats). A kind that only grows across
+		// loads and fast travel is the one that stacks.
+		shared::common::remix_api::Lifetime g_life_last;
+
+		void write_lifetime_line()
+		{
+			const auto life = shared::common::remix_api::lifetime();
+			const auto& last = g_life_last;
+			auto kind = [](const char* name, const shared::common::remix_api::Counts& c,
+				const shared::common::remix_api::Counts& was) {
+				return std::format("{} live={} +{}/-{}", name, c.created - c.destroyed, c.created - was.created,
+					c.destroyed - was.destroyed);
+			};
+			auto cache = [](const FeatureStats& s) {
+				return std::format("{} live={} created={} evicted={}", s.name, s.live, s.created, s.evicted);
+			};
+			uint32_t claimed = 0;
+			size_t scene_meshes = 0, scene_mats = 0;
+			comp::game::scene_statics::lifetime_counts(claimed, scene_meshes, scene_mats);
+			// The runtime's VRAM figures: only when the bridge client fills in
+			// GetVramStats (the runtime has it; the bridge client may not forward it).
+			std::string vram = " | vram n/a (the bridge does not forward GetVramStats)";
+			auto& bridge = shared::common::remix_api::get().m_bridge;
+			if (bridge.GetVramStats)
+			{
+				remixapi_VramStats v = {};
+				vram = " | vram n/a (GetVramStats failed)";
+				if (bridge.GetVramStats(&v) == REMIXAPI_ERROR_CODE_SUCCESS)
+				{
+					constexpr double kMb = 1024.0 * 1024.0;
+					vram = std::format(" | vram used={:.0f} MB (textures {:.0f}, buffers {:.0f}, BVH {:.0f}, pool {:.0f}) "
+						"driver={:.0f}/{:.0f} MB runtimeTextures={}", static_cast<double>(v.totalUsedBytes) / kMb,
+						static_cast<double>(v.usedMaterialTextureBytes) / kMb, static_cast<double>(v.usedBufferBytes) / kMb,
+						static_cast<double>(v.usedAccelerationStructureBytes) / kMb,
+						static_cast<double>(v.poolRetainedBytes) / kMb, static_cast<double>(v.driverAllocatedBytes) / kMb,
+						static_cast<double>(v.driverBudgetBytes) / kMb, v.forkTextureCacheCount);
+				}
+			}
+			const std::string mesh_extra = std::format(" refreshed +{} sameHash +{} refreshNewHandle={} unknownDestroys={}",
+				life.mesh_refreshed - last.mesh_refreshed, life.mesh_recreated - last.mesh_recreated, life.mesh_refresh_new,
+				life.mesh_unknown_destroys);
+			shared::common::log_event("Lifetime", std::format("api {}{} | {} | {} ({:.0f} MB, {} import releases) | {} | {} | {} | "
+				"{} | {} | {} | {} | {} | {} | textures cached={} | scene claimed={} meshes={} materials={} | retained live={}{}",
+				kind("mesh", life.mesh, last.mesh), mesh_extra, kind("material", life.material, last.material),
+				kind("texture", life.texture, last.texture), static_cast<double>(life.texture_bytes) / (1024.0 * 1024.0),
+				life.texture_unknown_destroys, kind("light", life.light, last.light),
+				cache(g_terrain), cache(g_far_lod), cache(g_water), cache(g_statics), cache(g_skinned), cache(g_foliage),
+				cache(g_unlit), cache(g_particles), g_textures.live, claimed, scene_meshes, scene_mats,
+				comp::game::api::retained::live_count(), vram), shared::common::LOG_TYPE::LOG_TYPE_STATUS);
+			g_life_last = life;
+			// Where the live meshes come from: the CreateMesh call sites holding
+			// the most (module+offset; the PDB names the function).
+			std::string sites;
+			for (const auto& m : shared::common::remix_api::mesh_sites(8))
+				sites += std::format("{}{} live={} created={} refreshed={}", sites.empty() ? "" : " | ", m.where, m.live,
+					m.created, m.refreshed);
+			if (!sites.empty())
+				shared::common::log_event("Lifetime", "mesh sites: " + sites, shared::common::LOG_TYPE::LOG_TYPE_STATUS);
+		}
+
 		void write_status_line()
 		{
 			const auto& tx = g_textures;
@@ -208,6 +273,7 @@ namespace comp::game::api
 			// Unlit FX and particles.
 			shared::common::log("RemixApi", api_submit::unlit_status(), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
 			shared::common::log("RemixApi", api_submit::particles_status(), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+			write_lifetime_line();
 		}
 	}
 

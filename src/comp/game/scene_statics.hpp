@@ -126,6 +126,10 @@ namespace comp::game::scene_statics
 	// any retained instance of its own for it.
 	bool claimed(uintptr_t geo);
 
+	// For the [Lifetime] line: live claimed records, and the shared meshes and
+	// materials held (referenced or waiting out EvictFrames).
+	void lifetime_counts(uint32_t& claimed, size_t& meshes, size_t& materials);
+
 	// The pass being drawn is a light card: the draw blends additively, its
 	// geometry is an NiTriShape / NiTriStrips with BSShaderNoLightingProperty
 	// and an additive NiAlphaProperty (destination ONE), under an
