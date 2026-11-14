@@ -44,13 +44,17 @@
  *   * the statics' material rules (shader, alpha func, blend, texture,
  *     rtx.conf lists the API can't express).
  * Not refused, the batch's / slot's current copy draws instead:
- *   * churn            one batch (grass) / one draw slot (leaves) that needed
- *                      more than kChurnBuilds meshes within kChurnWindow
- *                      frames builds nothing new for kChurnHold frames;
+ *   * churn            one draw slot (leaves) that needed more than
+ *                      kChurnBuilds meshes within kChurnWindow frames builds
+ *                      nothing new for kChurnHold frames (one batch, grass:
+ *                      kGrassChurnBuilds, kGrassChurnHold; a new instance set
+ *                      of its model is still applied in place);
  *   * budget           the per-frame build budget (MaxBuildsPerFrame, and
- *                      kGrassBuildsPerFrame for grass) is spent this frame;
+ *                      kGrassBuildsPerFrame for grass; an in-place grass
+ *                      update takes kGrassBuildsPerFrame only) is spent;
  *   * a retry pending after a failed build.
- * (With no copy yet, those draws are not drawn this frame.)
+ * (With no copy yet, a churn-held batch or slot builds its copy anyway; over
+ * the budget or with a retry pending the draw is not drawn this frame.)
  *
  * Grass identity: one batch = one NiGeometry
  * ------------------------------------------
@@ -68,9 +72,14 @@
  * NiGeometry is refused (unlinked): no identity is guessed.
  *
  * A part holds one mesh at a time. The same batch drawn with a new instance
- * set (a new expansion key) is a new generation: the new mesh is built (within
- * the build budget; over it the batch draws its current copy this frame) and
- * the part's old mesh and instance are destroyed. Supersession never crosses
+ * set (a new expansion key) is a new generation. When the part's mesh is the
+ * instanced model with the same material, the new transforms are applied in
+ * place (the mesh and its retained instance stay). A new key while the batch's
+ * generation (scene_graph::grass_generation) is unchanged is float noise in
+ * the constants: the mesh only takes the key, and is expanded again at least
+ * every kGrassRekeyRefresh frames. Otherwise the new mesh is built (within the
+ * build budget; over it the batch draws its current copy this frame) and the
+ * part's old mesh and instance are destroyed. Supersession never crosses
  * batches.
  * The grass batch hooks (scene_graph: append 0xBD8550, remove 0xBD85B0,
  * destroy 0xBD8F90) report changes the draws can't see: a batch whose
@@ -137,15 +146,29 @@ namespace comp::game::api_submit
 	{
 		constexpr uint64_t kDomain = 0x464F4C4941474531ull;   // "FOLIAGE1"
 		constexpr UINT kRetryFrames = 120;
-		// A batch (grass) / slot (leaves) that needs more than kChurnBuilds
-		// meshes within kChurnWindow frames builds none for kChurnHold frames.
+		// A slot (leaves) that needs more than kChurnBuilds new meshes within
+		// kChurnWindow frames builds none for kChurnHold frames. A grass batch
+		// is held past kGrassChurnBuilds new meshes, for kGrassChurnHold frames:
+		// walking changes a batch's instance set 7-10 times per 300 frames, and
+		// a held batch keeps its old grass for the whole hold. A new instance
+		// set of the same model is no new mesh: it updates the transforms in
+		// place and counts no churn, held or not.
 		constexpr uint32_t kChurnBuilds = 6;
 		constexpr UINT kChurnWindow = 300;
 		constexpr UINT kChurnHold = 1800;
-		// Grass meshes built per frame (first builds and new generations),
-		// on top of MaxBuildsPerFrame: a grass-grid move regenerates many
-		// batches at once; the rest draw their current copy until a later frame.
+		constexpr uint32_t kGrassChurnBuilds = 30;
+		constexpr UINT kGrassChurnHold = 300;
+		// Grass builds tried per frame (first builds, new generations and
+		// in-place updates): a grass-grid move regenerates many batches at
+		// once; the rest draw their current copy until a later frame. A new
+		// mesh also takes a MaxBuildsPerFrame slot; an in-place update (no
+		// mesh, no texture) takes none.
 		constexpr uint32_t kGrassBuildsPerFrame = 6;
+		// make_template: one copy may lack up to this many of the template's
+		// triangles (a full batch's last copy ends its strip short).
+		constexpr size_t kShortCopyTris = 2;
+		// A batch that only took new keys (float noise) is expanded again at least this often.
+		constexpr UINT kGrassRekeyRefresh = 300;
 
 		enum class Reason : uint8_t
 		{
@@ -171,7 +194,7 @@ namespace comp::game::api_submit
 			uint32_t built = 0, materials_built = 0;
 			uint32_t grass_linked = 0;   // grass draws with a batch NiGeometry from the dispatcher
 			uint32_t grass_unlinked = 0; // grass draws without one (not drawn)
-			uint32_t grass_builds = 0;   // grass meshes built (kGrassBuildsPerFrame)
+			uint32_t grass_builds = 0;   // grass builds tried, new or in place (kGrassBuildsPerFrame)
 			uint32_t fallback[static_cast<size_t>(Reason::Count)] = {};
 			// Since the last status line.
 			uint32_t culled_hidden = 0, superseded = 0, fallback_hidden = 0;
@@ -185,6 +208,11 @@ namespace comp::game::api_submit
 			uint64_t churn_holds = 0, placements_evicted = 0;
 			uint32_t instanced = 0, baked = 0;   // instanced-family meshes built each way
 			uint32_t instance_updates = 0;       // instanced meshes that took a new instance set in place
+			uint32_t instance_moves = 0;         // ... with new transforms (the others only changed key)
+			uint32_t held_in_place = 0;          // ... while their batch was held
+			uint32_t held_new = 0;               // held batches' new instance sets that needed a new mesh (not built)
+			uint32_t short_copies = 0;           // templates made with a short last copy (make_template)
+			uint32_t rekeyed = 0;                // grass: a new key for an unchanged batch and draw (constant noise): key only
 			const char* baked_why = nullptr;     // the last reason one was baked
 		};
 		Counters g_count;
@@ -262,6 +290,12 @@ namespace comp::game::api_submit
 			UINT window_start = 0;
 			uint32_t builds = 0;
 			UINT hold_until = 0;
+			uint64_t held_key = 0;             // the last key refused a new mesh in a hold (not tried again)
+			// When its instance set was last built (new mesh or in place): the
+			// engine's generation of the batch and the draw's identity.
+			uint64_t built_gen = 0, built_draw = 0;
+			UINT built_frame = 0;
+			bool built_valid = false;
 		};
 		std::unordered_map<uint64_t, Part> g_parts;
 
@@ -440,7 +474,8 @@ namespace comp::game::api_submit
 		// vertices' own (model) space. Every other drawn copy must be the same
 		// model: as many vertices, byte for byte the same apart from
 		// TEXCOORD1, and the same triangles (either winding: a strip's
-		// parity can flip between copies). False with `why` otherwise; the
+		// parity can flip between copies; one copy may lack up to
+		// kShortCopyTris of them). False with `why` otherwise; the
 		// batch is then baked.
 		template <typename Convert>
 		bool make_template(const shared::common::VsDesc& vs, const PsSlotMap* psmap, const DrawDesc& d,
@@ -506,6 +541,11 @@ namespace comp::game::api_submit
 			const auto& ref = copy[t];
 			const UINT lo = static_cast<UINT>(in.tc1_off), hi = lo + static_cast<UINT>(in.tc1_size);
 			xforms.clear();
+			bool short_copy = false;
+			// The last copy the draw's indices reach.
+			int last_drawn = -1;
+			for (size_t s = n; s-- > 0;)
+				if (!tris[s].empty()) { last_drawn = static_cast<int>(s); break; }
 			for (size_t s = 0; s < n; s++)
 			{
 				if (tris[s].empty()) continue;
@@ -514,7 +554,15 @@ namespace comp::game::api_submit
 				xforms.push_back(xf);
 				if (static_cast<int>(s) == t) continue;
 				if (copy[s].size() != ref.size()) { why = "instances differ (vertex count)"; return false; }
-				if (tris[s] != tris[t])
+				// A full grass batch's last copy ends its strip short (11856
+				// vertices, 228 copies: copy 227 has 40 of the model's 42
+				// triangles). Only that copy, only grass; it is drawn as the
+				// whole model.
+				if (!short_copy && vs.family == VsFamily::Grass && static_cast<int>(s) == last_drawn &&
+					tris[s].size() < tris[t].size() && tris[t].size() - tris[s].size() <= kShortCopyTris &&
+					std::includes(tris[t].begin(), tris[t].end(), tris[s].begin(), tris[s].end()))
+					short_copy = true;
+				else if (tris[s] != tris[t])
 				{
 					static bool s_logged = false;
 					if (!std::exchange(s_logged, true))
@@ -546,6 +594,7 @@ namespace comp::game::api_submit
 					return false;
 				}
 			}
+			if (short_copy) g_count.short_copies++;
 			return true;
 		}
 
@@ -555,11 +604,23 @@ namespace comp::game::api_submit
 		// `prev`: the batch's current mesh. When it is the same instanced
 		// model, it takes the new instances instead and `reused` is set (m
 		// then holds no mesh).
+		// Why build_mesh made no mesh without failing: the batch keeps drawing its current copy.
+		enum class BuildStop : uint8_t { None, Held, Budget };
+
+		// allow_new = false (a churn-held grass batch): only the in-place update of prev is allowed; anything that needs a
+		// new mesh stops with Held. budget_taken = false (a grass batch expected to update in place): a new mesh takes the
+		// build budget here, as budget_key, and stops with Budget when refused.
 		bool build_mesh(IDirect3DDevice9* dev, const shared::common::VsDesc& vs, const PsSlotMap* psmap,
 			const DrawDesc& d, const vs_expand::ApiWindow& win, const Material& mat, Mesh& m, Mesh* prev, bool& reused,
-			const char*& reject)
+			const char*& reject, bool allow_new, bool budget_taken, uint64_t budget_key, BuildStop& stop)
 		{
 			reused = false;
+			stop = BuildStop::None;
+			auto may_create = [&]() -> bool {
+				if (!allow_new) { stop = BuildStop::Held; return false; }
+				if (!budget_taken && !take_build_budget(budget_key)) { stop = BuildStop::Budget; return false; }
+				return true;
+			};
 			PROFILE_ZONE_N("api::foliage::build_mesh");
 			std::vector<uint8_t> xv;
 			vs_expand::ApiWindow again;
@@ -639,18 +700,25 @@ namespace comp::game::api_submit
 					{
 						// The same model at a new instance set: the batch's mesh
 						// and its retained instance stay; only the transforms
-						// change.
+						// change, and are re-sent only when they did (a new key
+						// can bring the same instances).
+						const bool moved = prev->instances.size() != m.instances.size() ||
+							std::memcmp(prev->instances.data(), m.instances.data(),
+								m.instances.size() * sizeof(remixapi_Transform)) != 0;
 						prev->instances = std::move(m.instances);
 						copy_bound(prev->e, m.e);
 						for (auto& p : prev->placements)
 						{
 							copy_bound(p->e, prev->e);
-							p->e.retained_refresh = true;
+							if (moved) p->e.retained_refresh = true;
 						}
 						reused = true;
 						g_count.instance_updates++;
+						if (moved) g_count.instance_moves++;
+						if (!allow_new) g_count.held_in_place++;
 						return true;
 					}
+					if (!may_create()) { m.instances.clear(); return false; }
 					m.e.mesh = create_mesh(next_object_hash(m.key, kDomain), tverts, ttris, mat.handle, m.model_key);
 					if (!m.e.mesh) { reject = "CreateMesh failed"; m.instances.clear(); return false; }
 					m.verts = static_cast<UINT>(tverts.size());
@@ -659,9 +727,11 @@ namespace comp::game::api_submit
 					return true;
 				}
 				m.instances.clear();
+				if (!may_create()) return false;
 				g_count.baked++;
 				g_count.baked_why = why;
 			}
+			else if (!may_create()) return false;
 
 			m.e.mesh = create_mesh(next_object_hash(m.key, kDomain), verts, g.tris, mat.handle,
 				asset_keys::of(verts, g.tris));
@@ -675,12 +745,12 @@ namespace comp::game::api_submit
 		// meshes. True = over the limit: it builds nothing new for a while
 		// and keeps drawing its current copy.
 		template <typename T>
-		bool churned(T& s, UINT now)
+		bool churned(T& s, UINT now, uint32_t limit, UINT hold)
 		{
 			if (s.builds && now - s.window_start <= kChurnWindow) s.builds++;
 			else { s.builds = 1; s.window_start = now; }
-			if (s.builds <= kChurnBuilds) return false;
-			s.hold_until = now + kChurnHold;
+			if (s.builds <= limit) return false;
+			s.hold_until = now + hold;
 			s.builds = 0;
 			g_count.churn_holds++;
 			return true;
@@ -953,7 +1023,21 @@ namespace comp::game::api_submit
 			g_count.stale++;
 			return claim(it->second);
 		};
-		if (now < (part ? part->hold_until : slot->hold_until)) return stale(Reason::Churn);
+		// The copy the batch / slot drew last, if it has one to stand in for a held draw.
+		auto has_copy = [&]() -> bool {
+			const uint64_t k = part ? part->mesh_key : slot->mesh_key;
+			const auto it = k ? g_meshes.find(k) : g_meshes.end();
+			return it != g_meshes.end() && it->second.e.mesh;
+		};
+		// A churn hold limits how often a batch / slot rebuilds: it draws its current copy instead. One that has no
+		// copy yet (its instance set changed more than kChurnBuilds times before a copy was placed, which is what
+		// happens right after a load, when the engine fills the cells and every grass batch changes a few times)
+		// has nothing to stand in and would stay invisible for the whole hold (kChurnHold frames, a minute at
+		// 30 fps). Such a draw builds its copy instead; later generations then draw that copy under the hold.
+		// A held grass batch goes on: a new instance set of the same model is applied in place below (the transforms only,
+		// within kGrassBuildsPerFrame); only a new mesh waits for the hold to end.
+		const bool grass_held = part && now < part->hold_until && has_copy();
+		if (!part && now < slot->hold_until && has_copy()) return stale(Reason::Churn);
 
 		// ---- Material ----
 		if (!psmap || !psmap->any_classified || !psmap->has(PsSlotRole::Diffuse) || psmap->has_lod_sampler ||
@@ -1046,6 +1130,8 @@ namespace comp::game::api_submit
 		}
 		if (mit == g_materials.end())
 		{
+			// A churn-held grass batch builds nothing new, a material included.
+			if (grass_held) return stale(Reason::Churn);
 			if (!take_build_budget(mkey))
 			{
 				if (!leaf) g_count.budget_holds++;
@@ -1086,17 +1172,73 @@ namespace comp::game::api_submit
 		{
 			const auto rt = g_retry_at.find(key);
 			if (rt != g_retry_at.end() && now < rt->second) return stale(Reason::Retry);
-			if (part ? churned(*part, now) : churned(*slot, now)) return stale(Reason::Churn);
+			// A churning slot with no copy builds this one (see the hold check above). Grass counts after the build, where an
+			// in-place update (no new mesh) is told apart from a real one.
+			if (!part && churned(*slot, now, kChurnBuilds, kChurnHold) && has_copy()) return stale(Reason::Churn);
+			// A held batch's instance set that needed a new mesh is not tried again during the hold.
+			if (grass_held && key == part->held_key) return stale(Reason::Churn);
+
+			Mesh* prev = nullptr;
+			if (part && part->mesh_key)
+			{
+				const auto pit = g_meshes.find(part->mesh_key);
+				if (pit != g_meshes.end()) prev = &pit->second;
+			}
+			// A grass batch whose mesh is the instanced model with this material most likely takes the new instance set in
+			// place: no mesh and no texture, so no MaxBuildsPerFrame slot (build_mesh takes one if a new mesh turns out to
+			// be needed). A held batch builds nothing else.
+			const bool in_place_likely = part && prev && prev->e.mesh && !prev->instances.empty() &&
+				prev->material_key == mkey;
+			// The draw itself (buffers, window, shader, index range, material), without the instance constants.
+			uint64_t draw_id = 0;
+			if (part)
+			{
+				Hash64 dh;
+				dh.mix(win.slot);
+				dh.mix(vbi.gen);
+				dh.mix(ibi.gen);
+				dh.mix(d.indexed ? d.start_index : 0u);
+				dh.mix(static_cast<uint64_t>(d.type) | (static_cast<uint64_t>(d.prim_count) << 8) | (d.indexed ? 1ull << 40 : 0ull));
+				dh.mix(mkey);
+				draw_id = dh.get();
+			}
+			// The batch's generation before the expansion reads its constants: a change a hook reports while this draw is
+			// built makes the next draw expand again instead of taking its key.
+			const uint64_t gen_now = part ? sg::grass_generation(geo) : 0;
+			// The same draw of a batch the engine has not changed since its instance set was built: the new key is float
+			// noise in the instance constants, which the engine re-derives every frame (with the player standing still,
+			// some batches got a new key every frame and were expanded again each time). The batch keeps its mesh, its
+			// instance and its transforms and only takes the key: no expansion, no budget, nothing re-sent.
+			if (in_place_likely && part->built_valid && part->built_draw == draw_id && sg::grass_hooks_installed() &&
+				part->built_gen == gen_now && now - part->built_frame < kGrassRekeyRefresh)
+			{
+				auto node = g_meshes.extract(part->mesh_key);
+				node.key() = key;
+				node.mapped().key = key;
+				mesh_it = g_meshes.insert(std::move(node)).position;
+				part->mesh_key = key;
+				g_count.rekeyed++;
+				return claim(mesh_it->second);
+			}
+			if (grass_held && !in_place_likely)
+			{
+				part->held_key = key;
+				g_count.held_new++;
+				return stale(Reason::Churn);
+			}
 			if (part && g_count.grass_builds >= kGrassBuildsPerFrame)
 			{
 				g_count.budget_holds++;
 				return stale(Reason::Budget);
 			}
-			if (!take_build_budget(key))
+			// Grass waits in the build queue as its batch: a new instance set while it waits keeps its place.
+			const uint64_t budget_key = part ? part_key : key;
+			if (!in_place_likely && !take_build_budget(budget_key))
 			{
 				if (part) g_count.budget_holds++;
 				return stale(Reason::Budget);
 			}
+			if (part) g_count.grass_builds++;   // the expansion and the template cost the same, new or in place
 
 			Mesh m;
 			m.key = key;
@@ -1108,16 +1250,23 @@ namespace comp::game::api_submit
 			m.blend = md.blend && !mat.alpha_dropped;
 			m.alpha_func = md.alpha_func;
 			m.alpha_ref = md.alpha_ref;
-			Mesh* prev = nullptr;
-			if (part && part->mesh_key)
-			{
-				const auto pit = g_meshes.find(part->mesh_key);
-				if (pit != g_meshes.end()) prev = &pit->second;
-			}
 			bool reused = false;
-			if (!build_mesh(dev, vs, psmap, d, win, mat, m, prev, reused, reject))
+			BuildStop stop = BuildStop::None;
+			if (!build_mesh(dev, vs, psmap, d, win, mat, m, prev, reused, reject, !grass_held, !in_place_likely, budget_key,
+				stop))
 			{
 				destroy_entry(m.e);
+				if (stop == BuildStop::Held)
+				{
+					part->held_key = key;
+					g_count.held_new++;
+					return stale(Reason::Churn);
+				}
+				if (stop == BuildStop::Budget)
+				{
+					g_count.budget_holds++;
+					return stale(Reason::Budget);
+				}
 				g_retry_at[key] = now + kRetryFrames;
 				note_failure(st, reject, std::format("{} VS 0x{:08X} PS 0x{:08X}, {} verts, {} prims",
 					leaf ? "leaves" : "grass", vs.vs_hash, psmap->ps_hash, d.num_vtx, d.prim_count));
@@ -1134,7 +1283,11 @@ namespace comp::game::api_submit
 				mesh_it = g_meshes.insert(std::move(node)).position;
 				part->mesh_key = key;
 				part->generations++;
-				g_count.grass_builds++;
+				part->held_key = 0;
+				part->built_gen = gen_now;
+				part->built_draw = draw_id;
+				part->built_frame = now;
+				part->built_valid = true;
 				return claim(mesh_it->second);
 			}
 			mat.refs++;
@@ -1148,9 +1301,11 @@ namespace comp::game::api_submit
 				mesh_it->second.vertex_color ? " + vertex colour" : "", md.normal ? " + normal" : ""));
 			if (part)
 			{
+				// A real new mesh counts as churn; past kGrassChurnBuilds the batch builds no new mesh for kGrassChurnHold
+				// frames.
+				if (part->mesh_key && part->mesh_key != key) churned(*part, now, kGrassChurnBuilds, kGrassChurnHold);
 				// The same batch at a new instance set: its old mesh and
 				// instance go (only this batch's).
-				g_count.grass_builds++;
 				if (part->mesh_key && part->mesh_key != key && destroy_mesh_key(part->mesh_key))
 				{
 					g_count.rebuilds++;
@@ -1158,6 +1313,11 @@ namespace comp::game::api_submit
 				}
 				part->mesh_key = key;
 				part->generations++;
+				part->held_key = 0;
+				part->built_gen = gen_now;
+				part->built_draw = draw_id;
+				part->built_frame = now;
+				part->built_valid = true;
 			}
 			// Leaves: the slot's previous mesh at this placement is replaced
 			// by this one (instance constants or buffer contents changed).
@@ -1431,13 +1591,16 @@ namespace comp::game::api_submit
 		}
 		const UINT now = frame();
 		uint32_t held = 0;
-		for (const auto& [k, sl] : g_slots) held += now < sl.hold_until ? 1u : 0u;
+		// In a hold with a copy to draw (one without a copy builds it).
+		auto drawn = [&](uint64_t mesh_key) { const auto it = mesh_key ? g_meshes.find(mesh_key) : g_meshes.end();
+			return it != g_meshes.end() && it->second.e.mesh; };
+		for (const auto& [k, sl] : g_slots) held += (now < sl.hold_until && drawn(sl.mesh_key)) ? 1u : 0u;
 		uint64_t gens = 0;
 		uint32_t batches_held = 0, multi_gen = 0;
 		for (const auto& [k, p] : g_parts)
 		{
 			gens += p.generations;
-			batches_held += now < p.hold_until ? 1u : 0u;
+			batches_held += (now < p.hold_until && drawn(p.mesh_key)) ? 1u : 0u;
 			multi_gen += p.generations > 1 ? 1u : 0u;
 		}
 		const auto hs = sg::grass_hook_stats();
@@ -1450,7 +1613,8 @@ namespace comp::game::api_submit
 			"grass batches={} "
 			"generations={} (batches past their first {}) held={} | since last line: rebuilds={} budgetHolds={} "
 			"genChanges={} genHidden={} destroyed={} deaths={} culledHidden={} superseded={} refusedHidden={} "
-			"leafMoved={} leafDeaths={} instanced={} (updated in place {}) baked={}{} | slotsHeld={} churnHolds={} evicted={} placementsEvicted={} "
+			"leafMoved={} leafDeaths={} instanced={} (updated in place {}, new transforms {}, while held {}; rekeyed {}) baked={}{} "
+			"shortCopies={} heldNew={} | slotsHeld={} churnHolds={} evicted={} placementsEvicted={} "
 			"failed={} retainedUpdates={} retainedFallback={} | hooks dispatcher={} batch={} (appends {} removes {} "
 			"destroys {})",
 			g_meshes.size(), grass_meshes, leaf_meshes, g_live_placements, grass_inst, leaf_inst, visible, linked,
@@ -1464,8 +1628,10 @@ namespace comp::game::api_submit
 			std::exchange(c.gen_hidden, 0u), std::exchange(c.batches_destroyed, 0u), std::exchange(c.batch_deaths, 0u),
 			std::exchange(c.culled_hidden, 0u), std::exchange(c.superseded, 0u), std::exchange(c.fallback_hidden, 0u),
 			std::exchange(c.leaf_moved, 0u), std::exchange(c.leaf_deaths, 0u),
-			std::exchange(c.instanced, 0u), std::exchange(c.instance_updates, 0u), baked,
+			std::exchange(c.instanced, 0u), std::exchange(c.instance_updates, 0u), std::exchange(c.instance_moves, 0u),
+			std::exchange(c.held_in_place, 0u), std::exchange(c.rekeyed, 0u), baked,
 			baked ? std::format(" (last: {})", c.baked_why ? c.baked_why : "?") : std::string(),
+			std::exchange(c.short_copies, 0u), std::exchange(c.held_new, 0u),
 			held, c.churn_holds, s.evicted, c.placements_evicted, s.failed, s.retained_updates_last,
 			s.retained_fallbacks_last,
 			sg::hooks_installed() ? "on" : "off", sg::grass_hooks_installed() ? "on" : "off",
