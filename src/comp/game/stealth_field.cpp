@@ -22,10 +22,12 @@ namespace comp::game::stealth_field
 		constexpr const char* kInnerParts[] = { "eye", "mouth", "teeth", "tongue", "toungue" };
 		constexpr uint32_t kObjectName = 0x08;       // NiObjectNET::m_kName
 
-		constexpr uint32_t kPmActorData = 0x08;      // Actor*[]
+		constexpr uint32_t kPmActorData = 0x08;      // MobileObject*[]: actors and projectiles
 		constexpr uint32_t kPmHighBegin = 0x14;      // level 0 (high process): [begin, end)
 		constexpr uint32_t kPmHighEnd = 0x24;
-		constexpr uint32_t kActorValueOwner = 0xA4;
+		constexpr uint32_t kFormType = 0x04;         // TESForm type, one byte
+		constexpr uint8_t kFormCharacter = 0x3B, kFormCreature = 0x3C;
+		constexpr uint32_t kActorValueOwner = 0xA4;  // of a character or a creature only
 		constexpr uint32_t kPlayerFirstPerson = 0x694;
 		constexpr uint32_t kAvInvisibility = 48, kAvChameleon = 49;
 		constexpr UINT kScanFrames = 4;
@@ -38,10 +40,23 @@ namespace comp::game::stealth_field
 		size_t g_roots_logged = 0;
 		uint32_t g_lines = 0;
 
+		// The process lists hold every mobile object, projectiles included. Only
+		// a character or a creature has an ActorValueOwner at kActorValueOwner:
+		// a projectile has a float there, which must never be called through.
+		bool is_actor(uintptr_t object)
+		{
+			uint32_t head = 0;
+			if (!scene_graph::read_u32(object + kFormType, head)) return false;
+			const uint8_t type = static_cast<uint8_t>(head & 0xFFu);
+			return type == kFormCharacter || type == kFormCreature;
+		}
+
 		bool actor_value_unguarded(uintptr_t actor, uint32_t av, float& out)
 		{
 			using GetActorValue = float(__thiscall*)(void*, uint32_t);
 			auto* owner = reinterpret_cast<void*>(actor + kActorValueOwner);
+			// Only through a vtable of the game's own.
+			if (!is_live_object(owner)) return false;
 			const auto* vtable = *reinterpret_cast<const uintptr_t* const*>(owner);
 			out = reinterpret_cast<GetActorValue>(vtable[3])(owner, av);
 			return true;
@@ -56,6 +71,7 @@ namespace comp::game::stealth_field
 
 		void note_actor(uintptr_t actor, bool player)
 		{
+			if (!is_actor(actor)) return;
 			float chameleon = 0.0f, invisibility = 0.0f;
 			if (!actor_value(actor, kAvChameleon, chameleon) || !actor_value(actor, kAvInvisibility, invisibility)) return;
 			if (!(chameleon > 0.0f) && !(invisibility > 0.0f)) return;
