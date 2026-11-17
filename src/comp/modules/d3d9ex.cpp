@@ -261,6 +261,7 @@ namespace comp
 	{
 		PROFILE_ZONE_N("d3d9::Reset");
 		TRACE_IF_ACTIVE(trace_Reset, pPresentationParameters);
+		comp::game::log_requested_size("Reset", pPresentationParameters);
 		pre_reset();
 		const auto hr = m_pIDirect3DDevice9->Reset(pPresentationParameters);
 		post_reset(hr);
@@ -1423,6 +1424,7 @@ namespace comp
 
 	HRESULT __stdcall d3d9ex::_d3d9::CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface)
 	{
+		comp::game::log_requested_size("CreateDevice", pPresentationParameters);
 		HRESULT hres = m_pIDirect3D9->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
 		shared::common::log("d3d9", "m_pIDirect3D9->CreateDevice", shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 
@@ -1581,6 +1583,7 @@ namespace comp
 
 	HRESULT __stdcall d3d9ex::_d3d9ex::CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface)
 	{
+		comp::game::log_requested_size("CreateDevice", pPresentationParameters);
 		HRESULT hres = m_pIDirect3D9Ex->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
 		shared::common::log("d3d9", "m_pIDirect3D9Ex->CreateDevice", shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
 

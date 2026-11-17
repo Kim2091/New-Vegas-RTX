@@ -437,6 +437,40 @@ namespace comp::game
 		return s && (s == backbuffer_surface || s == default_render_target);
 	}
 
+	bool is_screen_size(UINT w, UINT h)
+	{
+		if (w == backbuffer_width && h == backbuffer_height) return true;
+
+		const auto& a = fnv_exe::addr();
+		if (!a.screen_width || !a.screen_height) return false;
+		const UINT sw = *reinterpret_cast<const uint32_t*>(a.screen_width);
+		const UINT sh = *reinterpret_cast<const uint32_t*>(a.screen_height);
+		if (!sw || !sh || w != sw || h != sh) return false;
+
+		static bool logged = false;
+		if (!logged)
+		{
+			logged = true;
+			shared::common::log("Game", std::format("Screen size: the engine renders at {}x{} (iSize W/H) but the "
+				"backbuffer is {}x{}; targets of either size count as the screen", sw, sh, backbuffer_width,
+				backbuffer_height), shared::common::LOG_TYPE::LOG_TYPE_WARN, false);
+		}
+		return true;
+	}
+
+	void log_requested_size(const char* call, const D3DPRESENT_PARAMETERS* pp)
+	{
+		if (!pp) return;
+		const auto& a = fnv_exe::addr();
+		const UINT sw = a.screen_width ? *reinterpret_cast<const uint32_t*>(a.screen_width) : 0;
+		const UINT sh = a.screen_height ? *reinterpret_cast<const uint32_t*>(a.screen_height) : 0;
+		const bool differs = !pp->Windowed && sw && sh && (pp->BackBufferWidth != sw || pp->BackBufferHeight != sh);
+		shared::common::log("Game", std::format("{}: the game asks for a {}x{} backbuffer ({}), iSize W/H {}x{}{}", call,
+			pp->BackBufferWidth, pp->BackBufferHeight, pp->Windowed ? "windowed" : "fullscreen", sw, sh,
+			differs ? " -- not the same size: something changed the request before this wrapper saw it" : ""),
+			differs ? shared::common::LOG_TYPE::LOG_TYPE_WARN : shared::common::LOG_TYPE::LOG_TYPE_DEFAULT, false);
+	}
+
 	void init_backbuffer_tracking(IDirect3DDevice9* dev)
 	{
 		PROFILE_ZONE_N("game::init_backbuffer_tracking");
@@ -481,7 +515,7 @@ namespace comp::game
 		D3DSURFACE_DESC desc;
 		const bool have_desc = SUCCEEDED(surface->GetDesc(&desc));
 		offscreen_screen_sized = have_desc && backbuffer_surface && default_render_target && !is_screen_surface(surface) &&
-			desc.Width == backbuffer_width && desc.Height == backbuffer_height;
+			is_screen_size(desc.Width, desc.Height);
 
 		if (backbuffer_surface && surface == backbuffer_surface)
 		{
@@ -506,7 +540,7 @@ namespace comp::game
 		// an unexpected swap-chain arrangement can't mark every draw off-screen
 		// and disable FFP conversion.
 		if (have_desc)
-			rendering_to_backbuffer = (desc.Width == backbuffer_width && desc.Height == backbuffer_height);
+			rendering_to_backbuffer = is_screen_size(desc.Width, desc.Height);
 		else
 			rendering_to_backbuffer = true; // assume backbuffer on failure
 	}

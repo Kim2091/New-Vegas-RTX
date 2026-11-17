@@ -113,6 +113,16 @@ namespace comp::game
 	// The surface is the swap chain's backbuffer under either identity.
 	bool is_screen_surface(IDirect3DSurface9* s);
 
+	// A render target of the screen's size: the backbuffer's, or the engine's
+	// own (iSize W/H). The two differ when the backbuffer is forced to another
+	// size, e.g. to the desktop's in fullscreen; the engine still sizes its
+	// world and image-space targets from iSize.
+	bool is_screen_size(UINT w, UINT h);
+
+	// Logs the backbuffer size the game asks for next to the engine's iSize
+	// W/H, before the call goes on to the bridge.
+	void log_requested_size(const char* call, const D3DPRESENT_PARAMETERS* pp);
+
 	void init_backbuffer_tracking(IDirect3DDevice9* dev);
 	void on_set_render_target(IDirect3DDevice9* dev, DWORD idx, IDirect3DSurface9* surface);
 
