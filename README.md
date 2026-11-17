@@ -124,19 +124,29 @@ statistics).
 ### Path-traced scopes
 
 With **Path-traced scopes** on (`[Scopes] PathTraced`, default on, in the
-Alt+X menu), aiming a scoped weapon that has a lens entry keeps the world and
-the weapon on screen: the gun is raised in its ironsights pose and the runtime
-draws a path-traced lens in the scope itself, through which the world is
-magnified. There is no 2D overlay, no hidden weapon, no scissored view and no
-camera zoom. Weapons without an entry keep the game's own scopes.
+Alt+X menu), aiming a scoped weapon keeps the world and the weapon on screen:
+the gun is raised in its ironsights pose and the runtime draws a path-traced
+lens in the scope itself, through which the world is magnified. There is no 2D
+overlay, no hidden weapon, no scissored view and no camera zoom. A scope whose
+lens cannot be placed with confidence keeps the game's own scope.
 
 - **Which weapons:** a gun whose scope the game would show (the Has Scope
   flag and a scope model, and when the scope comes from a weapon mod, that mod
-  installed) and that has a lens entry for its installed mods, and the
-  binoculars (below). A camera (a scope, no projectile, but film as ammo)
-  keeps the game's overlay.
-- **The lens:** placed from the entry on the first-person weapon node, so it
-  moves with the gun. Its magnification is the entry's, or by default the zoom
+  installed), and the binoculars (below). A gun with a lens file for its
+  installed mods gets that file's optics; one without a file gets a default
+  telescopic lens (`[Scopes] DefaultLens`, default on). A camera (a scope, no
+  projectile, but film as ammo) keeps the game's overlay, as does a weapon
+  whose lens file says `Fit = off`.
+- **The lens:** placed from the weapon's first-person mesh as the game loaded
+  it (`[Scopes] FitLens`, default on): the scope's eyepiece and objective are
+  measured from its triangles at each equip, so replaced meshes, mod-added
+  weapons and mod-supplied scopes get a lens that sits in their scope. A lens
+  file's geometry is used when the mesh confirms it; the log has one
+  `Scopes: fit for ...` line per weapon saying which was used and why. With
+  `FitLens=0` the lens file's geometry is used as written, checked only by its
+  `Models` paths. The lens rides the first-person weapon node (or the scope's
+  own node), so it moves with the gun. Its magnification is the entry's, or
+  by default the zoom
   the game would have applied: `tan(fDefaultWorldFOV / 2) / tan(scopeFOV / 2)`,
   where `scopeFOV` is the weapon's sight FOV minus an installed zoom mod's
   value (whatever supplies the scope, as the game's own zoom does). Reflex

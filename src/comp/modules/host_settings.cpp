@@ -64,6 +64,8 @@ namespace comp::host_settings
 		constexpr const char* kInfoSavedReport = "FNV.Info.SavedReport";
 		constexpr const char* kActionScopeSave = "FNV.Action.ScopeSave";
 		constexpr const char* kActionScopeReload = "FNV.Action.ScopeReload";
+		constexpr const char* kActionScopeUseFit = "FNV.Action.ScopeUseFit";
+		constexpr const char* kActionScopeLogFit = "FNV.Action.ScopeLogFit";
 		constexpr const char* kInfoScope = "FNV.Info.Scope";
 		constexpr const char* kScopeNode = "FNV.Scope.Node";
 		// Frames between two looks at the saved report's text.
@@ -803,8 +805,16 @@ namespace comp::host_settings
 				: "Aim scoped weapons through a path-traced lens. It was off at startup (or its hooks could not be "
 				  "installed), so switching it on needs a restart.");
 			s_settings.back().user_menu = true;
+			add_bool("Scopes", "Scopes", "FitLens", "Place the lens from the weapon's mesh", L, &c.scopes.fit_lens, true,
+				"The lens is placed from the weapon's loaded mesh, so replaced and modded meshes get a lens that sits "
+				"in their scope; a lens file's geometry is used when the mesh confirms it. Off = the lens file's "
+				"geometry, checked only by its Models paths. Applies at the next equip.");
+			add_bool("Scopes", "Scopes", "DefaultLens", "Lens for scopes without a lens file", L, &c.scopes.default_lens,
+				true,
+				"A scoped weapon without a lens file gets a default telescopic lens when its scope can be fitted with "
+				"confidence. Off = it keeps the game's scope. Applies at the next equip.");
 			add_bool("Scopes", "Scopes", "AlignAim", "Align the eye with the scope", L, &c.scopes.align_aim, true,
-				"While a weapon with a lens entry is aimed, the first-person view sits at the entry's eye point "
+				"While a weapon with a lens is aimed, the first-person view sits at the lens's eye point "
 				"(EyepieceCenter minus EyeRelief along Axis), so the eye looks down the scope. Off = the weapon's "
 				"own ironsights pose.");
 			add_float("Scopes", "Scopes", "AlignSmoothing", "Eye follow time (s)", L, &c.scopes.align_smoothing, 0.45f,
@@ -1039,6 +1049,12 @@ namespace comp::host_settings
 					"Write the weapon's lens file, Data\\Config\\NewVegasRTX\\Scopes\\<EditorID>.ini.");
 				add_action(E, kActionScopeReload, "Reload scope files",
 					"Read every lens file again. Unsaved changes are dropped.");
+				add_action(E, kActionScopeUseFit, "Use the fitted geometry",
+					"Move the geometry values onto the lens measured from the weapon's mesh and let the mesh place the "
+					"lens again (Fit = auto). Save to keep it.");
+				add_action(E, kActionScopeLogFit, "Log the scope fit",
+					"Measure the held weapon's scope from its mesh again and write every axis looked at, with the "
+					"reason each was taken or turned down, to the log.");
 			}
 
 			// ---- [StealthField] ----
@@ -1164,6 +1180,8 @@ namespace comp::host_settings
 				else if (std::strcmp(s.key, kActionShowReport) == 0) game::session_report::show_saved();
 				else if (std::strcmp(s.key, kActionScopeSave) == 0) game::scopes::editor::save();
 				else if (std::strcmp(s.key, kActionScopeReload) == 0) game::scopes::editor::reload();
+				else if (std::strcmp(s.key, kActionScopeUseFit) == 0) game::scopes::editor::use_fit();
+				else if (std::strcmp(s.key, kActionScopeLogFit) == 0) game::scopes::editor::log_fit();
 				return;
 			}
 			if (s.kind == Kind::Info) return;

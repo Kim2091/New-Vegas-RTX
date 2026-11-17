@@ -1,8 +1,48 @@
 # Scope presets for mod authors
 
-A path-traced scope needs a lens file for the weapon. Weapons without one keep
-the game's own scope. This page is for authors who add scoped weapons, or who
-change a scoped weapon's first-person mesh.
+A scoped weapon does not need a lens file for a path-traced scope: the lens is
+placed from the weapon's first-person mesh as the game loaded it, and a weapon
+without a file gets a default telescopic lens. A lens file chooses the optics
+and the look (reticle, tint, magnification, vision modes, ...) by EditorID, and
+may give the lens geometry, which the mesh then checks. This page is for
+authors who add scoped weapons, or who change a scoped weapon's first-person
+mesh.
+
+## How the lens is placed
+
+At each equip (and when the weapon's mods or its first-person model change),
+the wrapper reads the triangles of the weapon's first-person model from the
+scene graph and measures its scope: round glass, rims and tube mouths along
+one axis, the tube's walls around it, the eyepiece at the end away from the
+muzzle (`ProjectileNode`) and the objective at the other, with the objective
+point just past the scope's front end. The barrel, axes whose eyepiece the eye
+cannot see, and axes with geometry right ahead of the objective are turned
+down; when two axes are about as good, the fit is not confident.
+
+Which geometry the lens uses, by the file's `Fit` key:
+
+| `Fit` | The lens geometry |
+|---|---|
+| `auto` (default) | The file's when the fit is confident and agrees with it; the fitted geometry when the fit is confident and the file's is off (or the file gives none); the file's when the fit is not confident but the file's passes a check against the mesh (the eyepiece in an opening, nothing between the eye and the eyepiece, free space ahead of the objective); otherwise the game's scope. |
+| `file` | The file's when it passes the check against the mesh; otherwise the fitted geometry when the fit is confident; otherwise the game's scope. |
+| `mesh` | The fitted geometry when the fit is confident; otherwise the game's scope. |
+| `off` | No lens: the game's own scope. |
+
+A file without `EyepieceCenter` gives no geometry: the fitted geometry is used
+with the file's optics. The fitted values are in the frame of the scope's
+nearest uniquely named node, so a scope on an animated node keeps its lens.
+
+The log has one line per weapon and mod set, starting `Scopes: fit for
+<EditorID> (mods ...), <model>:` with the fitted eyepiece, axis, radii and
+confidence, and ending with the decision: `file geometry (confirmed by the
+mesh)`, `fitted geometry (the file's eyepiece is 1.31 from the mesh's)`, `file
+geometry (fit not confident: ...; passes the mesh check)`, or `no lens: ...;
+the game's own scope stays`. With verbose logging every axis the fit looked at
+is logged too.
+
+`[Scopes] FitLens=0` turns the fit off: the file's geometry is used as written,
+with the `Models` check below. `[Scopes] DefaultLens=0` keeps the game's scope
+on weapons without a file.
 
 ## Where the files go
 
@@ -89,27 +129,35 @@ Models = mymod\weapons\myriflemod13.nif
 | `Grain` | `off` = no film grain on the lens | `on` |
 | `Node` | the model node the values are in, for a scope that moves on its own | the root |
 | `Models` | the first-person models the values fit (see below) | no check |
+| `Fit` | `auto`, `file`, `mesh` or `off`: where the geometry comes from (see above) | `auto` |
 
-## The mesh check
+## The Models check
 
 `Models` lists the first-person model paths (relative to `meshes\`, case and
-slashes do not matter) the values were made for. When it is given and the
-weapon is drawn with a different first-person model for its installed mods
-(the record's first-person model for that combination, else its own), the
-lens is not used for that weapon: the game's own scope stays, and the log
-says which model was drawn. Without `Models` there is no check.
+slashes do not matter) the values were made for. It is used only with
+`[Scopes] FitLens=0`, or when the weapon's mesh cannot be read: then, when it
+is given and the weapon is drawn with a different first-person model for its
+installed mods (the record's first-person model for that combination, else
+its own), the lens is not used for that weapon: the game's own scope stays,
+and the log says which model was drawn. Without `Models` there is no check.
 
-So a mod that points a scoped weapon at a new first-person mesh keeps the
-game's scope until it ships a lens file for its mesh. A mesh replacer that
-keeps the original path is not detected; if it moves the scope, ship a lens
-file for it.
+With the fit on, a mesh replacer that keeps the original path, or a mod that
+points a scoped weapon at a new mesh, gets a lens fitted to its own mesh; the
+vanilla file's geometry is used only where that mesh confirms it.
 
 ## Making one in game
 
 1. Equip the weapon and aim it.
-2. Open the Alt+X menu, section **Scope editor**, and move the sliders until
-   the lens sits on the scope's glass.
-3. **Save** writes the file it came from, or, for a weapon without one,
+2. Open the Alt+X menu, section **Scope editor**. The sliders start from the
+   lens on screen (the fitted geometry, or the file's), and the status line
+   says which it is. Change the optics and look as wanted. Moving a geometry
+   slider sets the entry's `Fit = file`: your geometry then wins over the
+   mesh's as long as it passes the check against the mesh.
+3. **Use the fitted geometry** moves the geometry sliders onto the fit and
+   sets `Fit = auto` again. **Log the scope fit** measures the mesh again and
+   writes every axis it looked at to the log, with the reason each was taken
+   or turned down.
+4. **Save** writes the file it came from, or, for a weapon without one,
    `Data\Config\NewVegasRTX\Scopes\<EditorID>.ini`. Save adds the model the
    weapon is drawn with now to `Models`. "Only for these weapon mods" saves
    the edit as the installed combination's section.

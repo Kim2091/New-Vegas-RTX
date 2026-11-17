@@ -1,6 +1,8 @@
 #include "std_include.hpp"
 #include "scopes.hpp"
 #include "scope_data.hpp"
+#include "scope_fit.hpp"
+#include "scope_mesh.hpp"
 
 #include "api_camera.hpp"
 #include "nvse_link.hpp"
@@ -308,8 +310,9 @@ namespace comp::game::scopes
 					: "the bridge client does not forward reticle textures (older runtime): entries keep their drawn "
 					  "reticle in the second focal plane");
 			log(ok
-				? std::format("the bridge client forwards CameraInfoLensEXT with its markings field -- weapons with a "
-					"lens entry aim through a path-traced lens (entries in {})", session_files::utf8(data::folder()))
+				? std::format("the bridge client forwards CameraInfoLensEXT with its markings field -- scoped weapons "
+					"aim through a path-traced lens ({}; lens files in {})", cfg().fit_lens ? "placed from the weapon's "
+					"mesh" : "lens files' geometry only", session_files::utf8(data::folder()))
 				: "the bridge client does NOT forward CameraInfoLensEXT with its markings field (older runtime) -- "
 				  "scopes are the game's own",
 				ok ? shared::common::LOG_TYPE::LOG_TYPE_STATUS : shared::common::LOG_TYPE::LOG_TYPE_WARN, false);
@@ -461,22 +464,13 @@ namespace comp::game::scopes
 
 		// A node of the weapon model by name (NiObjectNET +0x08), found once per
 		// model root and name; 0 when the model has none.
-		constexpr uint32_t OBJ_NAME_OFF = 0x08;
 		constexpr int kMaxNodeVisits = 4096;
 		uintptr_t g_named_root = 0;
 		char g_named_name[64] = {};
 		uintptr_t g_named_node = 0;
 		bool g_named_logged = false;
 
-		bool node_name(uintptr_t obj, char (&out)[64])
-		{
-			out[0] = 0;
-			uint32_t str = 0;
-			if (!scene_graph::read_u32(obj + OBJ_NAME_OFF, str) || str < 0x10000) return false;
-			if (!scene_graph::read_block(str, out, sizeof(out) - 1)) return false;
-			out[sizeof(out) - 1] = 0;
-			return true;
-		}
+		using mesh::node_name;
 
 		uintptr_t named_node(uintptr_t root, const char* name)
 		{
@@ -617,6 +611,71 @@ namespace comp::game::scopes
 		// logged once each.
 		std::unordered_set<uint64_t> g_model_logged;
 
+		// ---- The lens placed from the weapon's mesh ([Scopes] FitLens) -----------
+
+		// How a weapon's lens geometry was chosen.
+		enum class Source : uint8_t { None, FileConfirmed, Fitted, FileMeshCheck, FilePathCheck };
+
+		// Whether a weapon (with its mods) aims through a lens, and that lens.
+		struct Verdict
+		{
+			bool usable = false;
+			data::Lens lens;
+			int section = data::kBase;
+		};
+
+		enum class FitStatus : uint8_t { None, Pending, Usable, Fallback };
+
+		// The held weapon's fit: its model root, the mesh read from it, the
+		// fitter's result and the decision.
+		struct FitState
+		{
+			uintptr_t root = 0;
+			uint32_t form = 0;
+			uint8_t mods = 0xFF;
+			uint32_t gen = 0;
+			bool ids_ready = false;       // the EditorID table existed when the decision was made
+			FitStatus status = FitStatus::None;
+			data::Lens lens;
+			int section = data::kBase;
+			Source source = Source::None;
+			UINT next_try = 0;
+			int tries = 0;
+			std::string why;              // the decision in words
+			std::string logged;           // the decision last logged
+			std::string mesh_why;         // what the mesh read found
+			bool have_mesh = false;       // soup, nodes and result are from this root
+			fit::Soup soup;
+			mesh::Nodes nodes;
+			fit::Result result;
+			bool have_fitted = false;     // fitted: the result's geometry in its anchor's frame
+			data::Lens fitted;
+		};
+		FitState g_fit;
+		uint32_t g_fit_gen = 0;           // moves when lens files are read again or edited
+		bool g_fit_default_lens = true;   // [Scopes] DefaultLens as the last decision saw it
+		// The session's last verdict per (form ID, mods), and the one the hooks
+		// see for the held weapon: it changes only while the player is not
+		// aiming, or when the weapon or its mods change.
+		std::unordered_map<uint64_t, Verdict> g_verdicts;
+		uint64_t g_latched_key = ~0ull;
+		Verdict g_latched;
+		constexpr int kFitTries = 30;             // mesh reads before the path check stands in
+		constexpr UINT kFitRetryFrames = 10;
+
+		uint64_t fit_key(uint32_t form, uint8_t mods)
+		{
+			return static_cast<uint64_t>(form) | (static_cast<uint64_t>(mods & 7) << 32);
+		}
+
+		const Verdict* verdict_for(const Held& h)
+		{
+			const uint64_t key = fit_key(h.form_id, h.mods);
+			if (key == g_latched_key) return &g_latched;
+			const auto it = g_verdicts.find(key);
+			return it == g_verdicts.end() ? nullptr : &it->second;
+		}
+
 		bool held_lens(const Held& h, data::Lens* lens = nullptr, int* section = nullptr)
 		{
 			if (!h.weap || !h.shown) return false;
@@ -634,8 +693,16 @@ namespace comp::game::scopes
 				if (section) *section = data::kBase;
 				return true;
 			}
+			if (cfg().fit_lens)
+			{
+				const Verdict* v = verdict_for(h);
+				if (!v || !v->usable) return false;
+				if (lens) *lens = v->lens;
+				if (section) *section = v->section;
+				return true;
+			}
 			data::Lens l;
-			if (!data::resolve(h.form_id, h.mods, l, section)) return false;
+			if (!data::resolve(h.form_id, h.mods, l, section) || l.fit == data::kFitOff) return false;
 			// The entry's Models: a weapon drawn with another first-person model
 			// (a mesh replacer's record edit) keeps the game's own scope.
 			if (l.models[0])
@@ -659,6 +726,19 @@ namespace comp::game::scopes
 				}
 			}
 			if (lens) *lens = l;
+			return true;
+		}
+
+		// With FitLens, the held gun's lens as its current fit places it: false
+		// unless that fit is usable for the model drawn now, so no lens goes out
+		// with a placement from another model. Without FitLens, and for
+		// binoculars, `l` stays as held_lens gave it.
+		bool current_lens(const Held& h, data::Lens& l)
+		{
+			if (!cfg().fit_lens || h.optic) return true;
+			if (g_fit.status != FitStatus::Usable || g_fit.form != h.form_id || g_fit.mods != h.mods) return false;
+			if (g_fit.root != weapon_root(h)) return false;
+			l = g_fit.lens;
 			return true;
 		}
 
@@ -698,8 +778,22 @@ namespace comp::game::scopes
 		void __cdecl attach_hk(void* model)
 		{
 			// Both equip paths pass the weapon's own scope model (weapon +0x1E8).
-			if (model && active() && lens_weapon(static_cast<uint8_t*>(model) - WEAP_SCOPE_MODEL_OFF))
-				return g_orig_attach(nullptr);
+			// With FitLens only the held weapon's model is left out, and only
+			// while its verdict is a lens: every other weapon keeps its overlay.
+			if (model && active())
+			{
+				const auto* weap = static_cast<uint8_t*>(model) - WEAP_SCOPE_MODEL_OFF;
+				if (!cfg().fit_lens)
+				{
+					if (lens_weapon(weap)) return g_orig_attach(nullptr);
+				}
+				else
+				{
+					Held h;
+					if (held(h) && h.weap == weap && !h.optic && held_lens(h)) return g_orig_attach(nullptr);
+					if (optic(weap)) return g_orig_attach(nullptr);
+				}
+			}
 			g_orig_attach(model);
 		}
 
@@ -1067,6 +1161,69 @@ namespace comp::game::scopes
 		remixapi_Float3D f3(V3 v)
 		{
 			return { static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z) };
+		}
+
+		double dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+		// The camera's position from a device view (row vectors: p * R + t = 0).
+		V3 view_position(const D3DMATRIX& view)
+		{
+			const V3 t = { view.m[3][0], view.m[3][1], view.m[3][2] };
+			return { -(t.x * view.m[0][0] + t.y * view.m[0][1] + t.z * view.m[0][2]),
+				-(t.x * view.m[1][0] + t.y * view.m[1][1] + t.z * view.m[1][2]),
+				-(t.x * view.m[2][0] + t.y * view.m[2][1] + t.z * view.m[2][2]) };
+		}
+
+		// ---- Lens darkness ------------------------------------------------------------
+
+		// The runtime's lens overlay paints a telescopic lens pixel black outside
+		// the field stop and where the camera ray misses the exit pupil by more
+		// than the eye's pupil, and it draws the eyepiece disc over everything
+		// in front of it. A lens no light reaches the camera through is held
+		// back, so the scope's own mesh shows instead.
+		bool g_lens_dark = false;
+		// The ratio that holds a lens back, and the one that sends it again.
+		constexpr double kDarkEnter = 1.15;
+		constexpr double kDarkLeave = 1.05;
+		// The eye's pupil radius assumed here: twice the runtime's default
+		// rtx.lens.eyePupilMm (2.5 mm), so a lens is held back only when it is
+		// dark for any usual setting.
+		constexpr double kDarkEyePupilCm = 0.5;
+
+		// How far the camera is from seeing any light through the lens, as the
+		// larger of two ratios; above 1 every pixel of the eyepiece disc is
+		// black. `field`: the smallest apparent tangent of a camera ray through
+		// the disc over the field stop's tangent. `pupil`: the smallest offset
+		// at which such a ray crosses the exit pupil plane over the exit pupil's
+		// and the eye pupil's radii summed. A rectangle or binocular window is
+		// taken as the circle around it. All lengths are render units.
+		double lens_darkness(V3 cam, const remixapi_CameraInfoLensEXT& lo, double eye_pupil, double& field, double& pupil)
+		{
+			field = pupil = 0.0;
+			V3 axis = { lo.axis.x, lo.axis.y, lo.axis.z };
+			if (!unit(axis)) return 0.0;
+			const double aspect = lo.apertureAspect > 0.0f ? lo.apertureAspect : 1.0;
+			const double extent = lo.aperture == REMIXAPI_CAMERA_LENS_APERTURE_RECTANGLE ? std::sqrt(1.0 + aspect * aspect)
+				: lo.aperture == REMIXAPI_CAMERA_LENS_APERTURE_BINOCULAR ? 1.0 + aspect : 1.0;
+			const double radius = lo.eyepieceRadius * extent;
+			const V3 to_eyepiece = sub(V3{ lo.eyepieceCenter.x, lo.eyepieceCenter.y, lo.eyepieceCenter.z }, cam);
+			const double axial = dot(to_eyepiece, axis);
+			// A camera at or past the eyepiece plane has no ray toward the objective through it.
+			if (!(axial > 1e-6))
+			{
+				field = pupil = 1e9;
+				return 1e9;
+			}
+			const double lateral = len(sub(to_eyepiece, mul(axis, axial)));
+			const double tan_stop = std::tan((std::clamp)(static_cast<double>(lo.fieldStopDegrees), 0.1, 89.0) *
+				0.0174532925199433);
+			field = (lateral - radius) / axial / (tan_stop * extent);
+			const double relief = (std::max)(static_cast<double>(lo.eyeRelief), 0.0);
+			const double exit_pupil = (std::max)(static_cast<double>(lo.objectiveRadius), 0.0) /
+				(std::max)(static_cast<double>(lo.magnification), 0.01);
+			const double offset = (lateral * relief - radius * std::fabs(axial - relief)) / axial;
+			pupil = offset / (std::max)(exit_pupil + eye_pupil, 1e-6);
+			return (std::max)(field, pupil);
 		}
 
 		// ---- Weapon motion ([WeaponMotion]) -------------------------------------------
@@ -1882,7 +2039,7 @@ namespace comp::game::scopes
 			if (!geo) return;
 			Held h;
 			data::Lens l;
-			if (!held(h) || !h.weap || h.optic || !held_lens(h, &l)) return;
+			if (!held(h) || !h.weap || h.optic || !held_lens(h, &l) || !current_lens(h, l)) return;
 			const uintptr_t root = weapon_root(h);
 			if (!root) return;
 			bool under = false;
@@ -1921,9 +2078,11 @@ namespace comp::game::scopes
 			g_fp.form_id = h.form_id;
 			g_fp.frame = now;
 
-			// Once per weapon: whether the first-person pass rendered from the
-			// alignment point (the engine used it), for the log.
-			if (h.form_id != g_fp_logged_form && cfg().align_aim)
+			// Once per weapon, while aimed with the alignment point set this frame
+			// or the last: whether the first-person pass rendered from it (the
+			// engine used it), for the log.
+			const bool sight_set = g_sight_frame == now || g_sight_frame == now - 1;
+			if (h.form_id != g_fp_logged_form && cfg().align_aim && h.aiming && sight_set)
 			{
 				g_fp_logged_form = h.form_id;
 				float at[3];
@@ -1970,6 +2129,10 @@ namespace comp::game::scopes
 		char g_ed_texture[128] = {};
 		// The entry's Models, kept through edits.
 		char g_ed_models[768] = {};
+		// The entry's Fit, kept through edits.
+		int g_ed_fit = data::kFitAuto;
+		// The lens the fields were last set from (FitLens: the effective one).
+		data::Lens g_ed_effective;
 		uint32_t g_ed_form = 0;
 		uint8_t g_ed_mods = 0;
 		bool g_ed_target = false;
@@ -2079,6 +2242,7 @@ namespace comp::game::scopes
 			l.dirt = f.dirt;
 			l.grain = f.grain;
 			strncpy_s(l.reticle_texture, g_ed_texture, _TRUNCATE);
+			l.fit = g_ed_fit;
 			// Models keeps the entry's and adds the model the weapon is drawn
 			// with now.
 			strncpy_s(l.models, g_ed_models, _TRUNCATE);
@@ -2127,6 +2291,16 @@ namespace comp::game::scopes
 			return s.empty() ? "none" : s;
 		}
 
+		// For the editor's status line: where the edited weapon's lens geometry
+		// comes from (FitLens), or empty.
+		std::string geometry_status()
+		{
+			if (!cfg().fit_lens || g_fit.form != g_ed_form || g_fit.mods != g_ed_mods) return {};
+			if (g_fit.status == FitStatus::Pending) return "; measuring the mesh";
+			if (g_fit.status == FitStatus::Usable || g_fit.status == FitStatus::Fallback) return "; " + g_fit.why;
+			return {};
+		}
+
 		void update_status()
 		{
 			if (!g_ed_target)
@@ -2145,12 +2319,12 @@ namespace comp::game::scopes
 			int section = data::kBase;
 			if (!data::resolve(g_ed_form, g_ed_mods, l, &section))
 			{
-				set_status(std::format("{} (mods {}): no lens entry; changing a value creates one", *edid,
-					mods_text(g_ed_mods)));
+				set_status(std::format("{} (mods {}): no lens entry; changing a value creates one{}", *edid,
+					mods_text(g_ed_mods), geometry_status()));
 				return;
 			}
-			set_status(std::format("{} (mods {}): {}{}", *edid, mods_text(g_ed_mods), data::section_name(section),
-				data::dirty(g_ed_form) ? ", not saved" : ""));
+			set_status(std::format("{} (mods {}): {}{}{}", *edid, mods_text(g_ed_mods), data::section_name(section),
+				data::dirty(g_ed_form) ? ", not saved" : "", geometry_status()));
 		}
 
 		// The editor follows the equipped scoped gun and its installed mods.
@@ -2192,6 +2366,345 @@ namespace comp::game::scopes
 			return 0;
 		}
 
+		// ---- The fit: decision and latch ---------------------------------------------
+
+		const char* level_text(int level)
+		{
+			return level == 2 ? "high" : level == 1 ? "medium" : "no";
+		}
+
+		std::string vec_text(const float* v)
+		{
+			return std::format("({:.2f}, {:.2f}, {:.2f})", v[0], v[1], v[2]);
+		}
+
+		// A frame's point (or direction) in root space, and back.
+		void from_frame(const mesh::RootPose& p, const float* v, float* out, bool point)
+		{
+			const double s = point ? p.scale : 1.0;
+			for (int i = 0; i < 3; i++)
+				out[i] = static_cast<float>((p.rot[i * 3] * v[0] + p.rot[i * 3 + 1] * v[1] + p.rot[i * 3 + 2] * v[2]) * s +
+					(point ? p.pos[i] : 0.0f));
+		}
+
+		void to_frame(const mesh::RootPose& p, const float* v, float* out, bool point)
+		{
+			const double d[3] = { v[0] - (point ? p.pos[0] : 0.0f), v[1] - (point ? p.pos[1] : 0.0f),
+				v[2] - (point ? p.pos[2] : 0.0f) };
+			const double s = point && p.scale > 1e-6f ? p.scale : 1.0;
+			for (int i = 0; i < 3; i++)
+				out[i] = static_cast<float>((p.rot[i] * d[0] + p.rot[3 + i] * d[1] + p.rot[6 + i] * d[2]) / s);
+		}
+
+		// The frame an entry's values are in (its Node, else the root),
+		// relative to the model root.
+		mesh::RootPose entry_frame(uintptr_t root, const char* node)
+		{
+			mesh::RootPose p;
+			if (node && node[0])
+				if (const uintptr_t n = named_node(root, node)) mesh::relative_pose(root, n, p);
+			return p;
+		}
+
+		fit::Geometry root_geometry(const data::Lens& l, const mesh::RootPose& p)
+		{
+			fit::Geometry g;
+			from_frame(p, l.eyepiece, g.eyepiece, true);
+			from_frame(p, l.axis, g.axis, false);
+			from_frame(p, l.up, g.up, false);
+			g.eyepiece_radius = l.eyepiece_radius * p.scale;
+			g.objective_distance = l.objective_distance * p.scale;
+			g.objective_radius = l.objective_radius * p.scale;
+			return g;
+		}
+
+		// The fit's geometry in its anchor's frame (the eyepiece shape's nearest
+		// uniquely named ancestor-or-self, else the root); `scale` gets that
+		// frame's scale relative to the root.
+		data::Lens fitted_geometry(const fit::Result& r, const mesh::Nodes& n, float& scale)
+		{
+			data::Lens l;
+			mesh::RootPose p;
+			const uint32_t s = r.eyepiece_shape;
+			if (s < n.shape_anchor.size() && n.shape_anchor[s] >= 0)
+			{
+				const mesh::Anchor& a = n.anchors[static_cast<size_t>(n.shape_anchor[s])];
+				p = a.pose;
+				strncpy_s(l.node, a.name, _TRUNCATE);
+			}
+			to_frame(p, r.eyepiece, l.eyepiece, true);
+			to_frame(p, r.axis, l.axis, false);
+			to_frame(p, r.up, l.up, false);
+			const float k = p.scale > 1e-6f ? 1.0f / p.scale : 1.0f;
+			l.eyepiece_radius = r.eyepiece_radius * k;
+			l.objective_distance = r.objective_distance * k;
+			l.objective_radius = r.objective_radius * k;
+			l.aperture = r.aperture;
+			l.aperture_aspect = r.aperture_aspect;
+			l.geometry_given = true;
+			scale = p.scale > 1e-6f ? p.scale : 1.0f;
+			return l;
+		}
+
+		// `entry` with the geometry of `geo` (in a frame of relative scale
+		// geo_scale); the eye relief keeps its length.
+		data::Lens with_geometry(const data::Lens& entry, float entry_scale, const data::Lens& geo, float geo_scale)
+		{
+			data::Lens l = entry;
+			std::memcpy(l.eyepiece, geo.eyepiece, sizeof(l.eyepiece));
+			std::memcpy(l.axis, geo.axis, sizeof(l.axis));
+			std::memcpy(l.up, geo.up, sizeof(l.up));
+			l.eyepiece_radius = geo.eyepiece_radius;
+			l.objective_distance = geo.objective_distance;
+			l.objective_radius = geo.objective_radius;
+			l.aperture = geo.aperture;
+			l.aperture_aspect = geo.aperture_aspect;
+			strncpy_s(l.node, geo.node, _TRUNCATE);
+			l.eye_relief = entry.eye_relief * entry_scale / (geo_scale > 1e-6f ? geo_scale : 1.0f);
+			l.geometry_given = true;
+			return l;
+		}
+
+		float g_fitted_scale = 1.0f;   // g_fit.fitted's frame scale relative to the root
+
+		void log_candidates(const fit::Result& r)
+		{
+			for (const fit::Candidate& c : r.candidates)
+				log(std::format("fit candidate: {} at {} axis ({:.3f}, {:.3f}, {:.3f}), span {:.2f}, tube {:.2f}, score {:.2f}, "
+					"{} openings, {} surfaces: {}", c.usable ? "usable" : "refused", vec_text(c.point), c.axis[0], c.axis[1],
+					c.axis[2], c.span, c.tube, c.score, c.members, c.hits, c.why));
+		}
+
+		// Decides the held weapon's lens from its entry, [Scopes] DefaultLens and
+		// the fit (scopes.hpp), stores the verdict and logs it. `fresh`: a new
+		// mesh read, not a re-decision after an edit.
+		void fit_decide(const Held& h, bool fresh)
+		{
+			FitState& f = g_fit;
+			f.ids_ready = data::editor_ids_ready();
+			data::Lens entry;
+			int section = data::kBase;
+			const bool have_entry = data::resolve(h.form_id, h.mods, entry, &section);
+			if (!have_entry) entry = data::Lens{};
+			const mesh::RootPose frame = entry_frame(f.root, entry.node);
+			const fit::Result& r = f.result;
+			const bool usable = f.have_mesh && r.found;
+			f.have_fitted = usable;
+			if (usable) f.fitted = fitted_geometry(r, f.nodes, g_fitted_scale);
+			std::string drawn[2];
+			const int nd = fp_models(h.weap, h.mods, drawn);
+			const fit::Geometry file = root_geometry(entry, frame);
+			const int mode = entry.geometry_given ? entry.fit : data::kFitMesh;
+			const std::string fit_words = std::format("fit not confident: {}", r.why);
+
+			Source src = Source::None;
+			std::string decision, deltas;
+			if (usable && entry.geometry_given)
+			{
+				const fit::Agreement a = fit::agrees(r, file, f.soup.unit_scale);
+				deltas = std::format("; the file's eyepiece is {:.2f} across and {:+.2f} along the mesh's, radius {:+.2f}, "
+					"objective end {:+.2f}, axis {:.1f} degrees", a.lateral, a.axial, a.radius, a.objective, a.axis_degrees);
+			}
+			if (!have_entry && !cfg().default_lens)
+				decision = "no lens: the weapon has no lens file and [Scopes] DefaultLens=0";
+			else if (!have_entry && !data::any_files())
+				decision = "no lens: no scope presets are installed (the lens folder is empty), so the weapon keeps the game's scope";
+			else if (entry.fit == data::kFitOff)
+				decision = "no lens: the entry keeps the game's scope (Fit = off)";
+			else if (!f.have_mesh)
+			{
+				const bool listed = !entry.models[0] || nd == 0 || data::lists_model(entry, drawn[0]);
+				if (mode != data::kFitMesh && listed)
+				{
+					src = Source::FilePathCheck;
+					decision = std::format("file geometry (the mesh could not be read: {}; path check)", f.mesh_why);
+				}
+				else decision = std::format("no lens: the mesh could not be read ({}){}", f.mesh_why, mode == data::kFitMesh
+					? "" : "; the entry's Models do not list the drawn model");
+			}
+			else if (mode == data::kFitMesh)
+			{
+				if (usable)
+				{
+					src = Source::Fitted;
+					decision = have_entry ? "fitted geometry (the entry gives none, or Fit = mesh)"
+						: "fitted geometry, default lens (no lens file)";
+				}
+				else decision = "no lens: " + fit_words;
+			}
+			else if (mode == data::kFitFile)
+			{
+				const fit::Check mc = fit::mesh_check(f.soup, file);
+				if (mc.ok)
+				{
+					src = Source::FileMeshCheck;
+					decision = "file geometry (Fit = file; passes the mesh check)";
+				}
+				else if (usable)
+				{
+					src = Source::Fitted;
+					decision = std::format("fitted geometry (Fit = file, but the file's geometry fails the mesh check: {})",
+						mc.why);
+				}
+				else decision = std::format("no lens: {}; the file's geometry fails the mesh check: {}", fit_words, mc.why);
+			}
+			else if (usable)
+			{
+				const fit::Agreement a = fit::agrees(r, file, f.soup.unit_scale);
+				src = a.ok ? Source::FileConfirmed : Source::Fitted;
+				decision = a.ok ? "file geometry (confirmed by the mesh)" : std::format("fitted geometry ({})", a.why);
+			}
+			else
+			{
+				const fit::Check mc = fit::mesh_check(f.soup, file);
+				if (mc.ok)
+				{
+					src = Source::FileMeshCheck;
+					decision = std::format("file geometry ({}; passes the mesh check)", fit_words);
+				}
+				else decision = std::format("no lens: {}; the file's geometry fails the mesh check: {}", fit_words, mc.why);
+			}
+
+			f.source = src;
+			f.section = section;
+			f.status = src != Source::None ? FitStatus::Usable : FitStatus::Fallback;
+			f.lens = src == Source::Fitted ? with_geometry(entry, frame.scale, f.fitted, g_fitted_scale) : entry;
+			f.why = decision;
+			Verdict& v = g_verdicts[fit_key(h.form_id, h.mods)];
+			v.usable = f.status == FitStatus::Usable;
+			v.lens = f.lens;
+			v.section = section;
+
+			if (fresh || decision != f.logged)
+			{
+				f.logged = decision;
+				const std::string* edid = data::editor_id(h.form_id);
+				std::string line = std::format("fit for {} (mods {}), {}: ", edid ? *edid : std::format("{:08X}", h.form_id),
+					mods_text(h.mods), nd ? drawn[0] : std::string("model unknown"));
+				if (!f.have_mesh) line += std::format("mesh not read ({}); ", f.mesh_why);
+				else if (r.found)
+					line += std::format("eyepiece {} r {:.2f}{}, axis {}, up {}, objective {:.2f} r {:.2f}, node '{}', {} "
+						"confidence {:.2f} ({}); ", vec_text(r.eyepiece), r.eyepiece_radius, r.aperture ? std::format(
+						" (rectangle {:.2f}:1)", r.aperture_aspect) : std::string(), vec_text(r.axis), vec_text(r.up),
+						r.objective_distance, r.objective_radius, f.fitted.node[0] ? f.fitted.node : "(root)",
+						level_text(r.level), r.confidence, r.why);
+				else line += std::format("{}; ", fit_words);
+				line += decision + deltas;
+				const bool fallback = f.status == FitStatus::Fallback;
+				if (fallback) line += "; the game's own scope stays";
+				log(line, fallback ? shared::common::LOG_TYPE::LOG_TYPE_WARN : shared::common::LOG_TYPE::LOG_TYPE_DEFAULT);
+				if (shared::common::log_verbose() && f.have_mesh)
+				{
+					log(std::format("fit mesh: {}", f.mesh_why));
+					log_candidates(r);
+				}
+			}
+			if (h.form_id == g_ed_form && h.mods == g_ed_mods)
+			{
+				if (fresh) g_ed_resync = true;
+				else update_status();
+			}
+		}
+
+		// The main camera's position in the weapon root's space: the eye hint
+		// for a model without a projectile node.
+		void eye_hint(const Held& h, fit::Hints& hints)
+		{
+			Pose root, cam;
+			if (!weapon_pose(h, nullptr, root) || !main_camera_pose(cam)) return;
+			const V3 e = mul(unrotate(root, sub(v3(cam.pos), v3(root.pos))), 1.0 / root.scale);
+			hints.eye[0] = static_cast<float>(e.x);
+			hints.eye[1] = static_cast<float>(e.y);
+			hints.eye[2] = static_cast<float>(e.z);
+			hints.have_eye = true;
+		}
+
+		// Reads the mesh and fits it; a mesh not readable yet is read again
+		// every kFitRetryFrames, up to kFitTries times.
+		void fit_attempt(const Held& h)
+		{
+			FitState& f = g_fit;
+			std::string why;
+			f.have_mesh = mesh::collect(f.root, f.soup, f.nodes, why);
+			f.mesh_why = why;
+			if (!f.have_mesh && ++f.tries < kFitTries)
+			{
+				f.next_try = api::frame() + kFitRetryFrames;
+				return;
+			}
+			f.result = {};
+			if (f.have_mesh)
+			{
+				if (!f.soup.hints.have_projectile) eye_hint(h, f.soup.hints);
+				f.result = fit::fit(f.soup);
+			}
+			f.gen = g_fit_gen;
+			fit_decide(h, true);
+		}
+
+		// The verdict the hooks see: the session's for the held weapon, moved on
+		// only while not aiming or when the weapon or its mods change.
+		void latch(const Held& h)
+		{
+			const bool target = h.weap && h.shown && !h.optic;
+			const uint64_t key = target ? fit_key(h.form_id, h.mods) : ~0ull;
+			if (key == g_latched_key && h.aiming) return;
+			g_latched_key = key;
+			const auto it = g_verdicts.find(key);
+			g_latched = it != g_verdicts.end() ? it->second : Verdict{};
+		}
+
+		// Present: a new first-person model, weapon or mod set starts a fit; an
+		// edit, a reload or the EditorID table becoming ready decides again from
+		// the mesh already read.
+		void fit_update()
+		{
+			if (!cfg().fit_lens) return;
+			Held h;
+			if (!held(h)) return;
+			if (cfg().default_lens != g_fit_default_lens)
+			{
+				g_fit_default_lens = cfg().default_lens;
+				g_fit_gen++;
+			}
+			const bool target = h.weap && h.shown && !h.optic;
+			const uintptr_t root = target ? weapon_root(h) : 0;
+			if (root)
+			{
+				FitState& f = g_fit;
+				if (root != f.root || h.form_id != f.form || h.mods != f.mods)
+				{
+					f = FitState{};
+					f.root = root;
+					f.form = h.form_id;
+					f.mods = h.mods;
+					f.gen = g_fit_gen;
+					f.status = FitStatus::Pending;
+					f.next_try = api::frame();
+				}
+				else if (f.status != FitStatus::Pending && (f.gen != g_fit_gen || (!f.ids_ready && data::editor_ids_ready())))
+				{
+					f.gen = g_fit_gen;
+					fit_decide(h, false);
+				}
+				if (f.status == FitStatus::Pending && static_cast<int>(api::frame() - f.next_try) >= 0) fit_attempt(h);
+			}
+			latch(h);
+		}
+
+		bool geometry_differs(const data::Lens& a, const data::Lens& b)
+		{
+			const auto differ = [](const float* x, const float* y, int n) {
+				for (int i = 0; i < n; i++)
+					if (std::fabs(x[i] - y[i]) > 1e-5f) return true;
+				return false;
+			};
+			return differ(a.eyepiece, b.eyepiece, 3) || differ(a.axis, b.axis, 3) || differ(a.up, b.up, 3) ||
+				differ(&a.eyepiece_radius, &b.eyepiece_radius, 1) || differ(&a.objective_distance, &b.objective_distance, 1) ||
+				differ(&a.objective_radius, &b.objective_radius, 1) || differ(&a.aperture_aspect, &b.aperture_aspect, 1) ||
+				a.aperture != b.aperture || std::strcmp(a.node, b.node) != 0;
+		}
+
 		void editor_follow()
 		{
 			Held h;
@@ -2204,8 +2717,15 @@ namespace comp::game::scopes
 			g_ed_resync = false;
 			data::Lens l;
 			int section = data::kBase;
-			if (target && data::resolve(g_ed_form, g_ed_mods, l, &section)) fields_from(l, section != data::kBase);
-			else fields_from(data::Lens{}, false);
+			const bool entry = target && data::resolve(g_ed_form, g_ed_mods, l, &section);
+			if (!entry) l = data::Lens{};
+			g_ed_fit = l.fit;
+			// With FitLens the fields start from the lens on screen.
+			if (target && cfg().fit_lens && g_fit.status == FitStatus::Usable && g_fit.form == g_ed_form &&
+				g_fit.mods == g_ed_mods)
+				l = g_fit.lens;
+			fields_from(l, entry && section != data::kBase);
+			g_ed_effective = l;
 			list_nodes(target ? weapon_root(h) : 0, l.node);
 			g_fields.node = node_index(l.node);
 			update_status();
@@ -2345,13 +2865,13 @@ namespace comp::game::scopes
 		return g_hooked;
 	}
 
-	bool lens(remixapi_CameraInfoLensEXT& out)
+	bool lens(const D3DMATRIX& device_view, remixapi_CameraInfoLensEXT& out)
 	{
 		Held h;
 		data::Lens l;
 		const bool have = held(h);
 		if (!have) h = Held{};
-		const bool lens_held = have && held_lens(h, &l);
+		const bool lens_held = have && held_lens(h, &l) && current_lens(h, l);
 		// The weapon motion runs for every first-person aim, scope or not.
 		motion_update(h, lens_held && active());
 		if (!active()) return false;
@@ -2553,6 +3073,7 @@ namespace comp::game::scopes
 			g_zoom = std::clamp(magnification, zoom_lo, zoom_hi);
 			g_vision = vision_default;
 			g_wheel = 0;
+			g_lens_dark = false;
 		}
 		g_vision_default = vision_default;
 		// The modes the vision key cycles: all three with VisionAllModes, else
@@ -2700,6 +3221,27 @@ namespace comp::game::scopes
 				(cfg().align_aim ? "the eye point" : "the engine's sighting node") : "the main camera",
 				g_faults ? std::format("; {} reads faulted since startup", g_faults) : std::string()));
 		}
+
+		// A telescopic scope at the hip or during the aim-in is held back while
+		// no light reaches the camera through it; a locked aim always sends it.
+		if (!h.optic && lo.kind == REMIXAPI_CAMERA_LENS_KIND_TELESCOPIC && !locked)
+		{
+			double field = 0.0, pupil = 0.0;
+			const double ratio = lens_darkness(view_position(device_view), lo, kDarkEyePupilCm * s / kCmPerUnit, field, pupil);
+			const bool dark = ratio > (g_lens_dark ? kDarkLeave : kDarkEnter);
+			if (dark != g_lens_dark && shared::common::log_verbose())
+				log(dark ? std::format("lens held back {}: no light reaches the camera through it (field stop ratio "
+					"{:.2f}, exit pupil ratio {:.2f})", aimed ? "during the aim-in" : "at the hip", field, pupil)
+					: std::format("lens sent again: light reaches the camera through it (field stop ratio {:.2f}, exit "
+					"pupil ratio {:.2f})", field, pupil));
+			g_lens_dark = dark;
+			if (dark) return false;
+		}
+		else if (g_lens_dark)
+		{
+			if (shared::common::log_verbose()) log("lens sent again: the aim is locked");
+			g_lens_dark = false;
+		}
 		return true;
 	}
 
@@ -2719,6 +3261,7 @@ namespace comp::game::scopes
 		force_first_person();
 		push_blur();
 		build_tags();
+		fit_update();
 		editor_follow();
 	}
 
@@ -2730,11 +3273,7 @@ namespace comp::game::scopes
 		// p * R + t = 0), and the eye's offset from the lens's exit-pupil
 		// center (eyepieceCenter - axis * eyeRelief), along the axis (+ toward
 		// the eyepiece) and across it, in game units.
-		const V3 t = { view.m[3][0], view.m[3][1], view.m[3][2] };
-		V3 cam = { 0.0, 0.0, 0.0 };
-		cam.x = -(t.x * view.m[0][0] + t.y * view.m[0][1] + t.z * view.m[0][2]);
-		cam.y = -(t.x * view.m[1][0] + t.y * view.m[1][1] + t.z * view.m[1][2]);
-		cam.z = -(t.x * view.m[2][0] + t.y * view.m[2][1] + t.z * view.m[2][2]);
+		const V3 cam = view_position(view);
 		V3 axis = { lens.axis.x, lens.axis.y, lens.axis.z };
 		double axial = 0.0, lateral = 0.0;
 		if (unit(axis))
@@ -2804,8 +3343,85 @@ namespace comp::game::scopes
 		{
 			if (!g_ed_target) return;
 			const int section = g_fields.combination ? g_ed_mods : data::kBase;
-			if (!data::set(g_ed_form, section, lens_from_fields())) return;
+			data::Lens l = lens_from_fields();
+			// A geometry value moved by hand: the file's geometry takes over
+			// from the mesh's.
+			if (cfg().fit_lens && geometry_differs(l, g_ed_effective))
+			{
+				g_ed_fit = data::kFitFile;
+				l.fit = data::kFitFile;
+			}
+			if (!data::set(g_ed_form, section, l)) return;
+			g_ed_effective = l;
+			g_fit_gen++;
 			update_status();
+		}
+
+		void use_fit()
+		{
+			if (!g_ed_target)
+			{
+				set_status("no scoped weapon equipped");
+				return;
+			}
+			if (!cfg().fit_lens || !g_fit.have_fitted || g_fit.form != g_ed_form || g_fit.mods != g_ed_mods)
+			{
+				set_status("no fitted geometry for this weapon: the mesh gave no confident fit, or [Scopes] FitLens is off");
+				return;
+			}
+			const int section = g_fields.combination ? g_ed_mods : data::kBase;
+			const data::Lens edited = lens_from_fields();
+			data::Lens l = with_geometry(edited, entry_frame(g_fit.root, edited.node).scale, g_fit.fitted, g_fitted_scale);
+			l.fit = data::kFitAuto;
+			g_ed_fit = data::kFitAuto;
+			if (!data::set(g_ed_form, section, l)) return;
+			fields_from(l, g_fields.combination);
+			g_ed_effective = l;
+			list_nodes(g_fit.root, l.node);
+			g_fields.node = node_index(l.node);
+			g_fit_gen++;
+			update_status();
+		}
+
+		void log_fit()
+		{
+			Held h;
+			if (!held(h) || !h.weap || h.optic || !h.shown)
+			{
+				set_status("no scoped weapon equipped: nothing to fit");
+				return;
+			}
+			const uintptr_t root = weapon_root(h);
+			if (!root)
+			{
+				set_status("the weapon's first-person model is not loaded (third person?)");
+				return;
+			}
+			fit::Soup soup;
+			mesh::Nodes nodes;
+			std::string why;
+			if (!mesh::collect(root, soup, nodes, why))
+			{
+				log("fit log: the mesh could not be read: " + why, shared::common::LOG_TYPE::LOG_TYPE_WARN);
+				set_status("fit: the mesh could not be read: " + why);
+				return;
+			}
+			if (!soup.hints.have_projectile) eye_hint(h, soup.hints);
+			LARGE_INTEGER t0 = {};
+			QueryPerformanceCounter(&t0);
+			const fit::Result r = fit::fit(soup);
+			const double ms = seconds_since(t0.QuadPart) * 1000.0;
+			std::string drawn[2];
+			const int nd = fp_models(h.weap, h.mods, drawn);
+			log(std::format("fit log for {} (mods {}), {}: {}; {} confidence {:.2f}: {}; eyepiece {} r {:.2f}, axis {}, up {}, "
+				"objective {:.2f} r {:.2f}; {} axes, {:.1f} ms", data::editor_id(h.form_id) ? *data::editor_id(h.form_id)
+				: std::format("{:08X}", h.form_id), mods_text(h.mods), nd ? drawn[0] : std::string("model unknown"), why,
+				level_text(r.level), r.confidence, r.why, vec_text(r.eyepiece), r.eyepiece_radius, vec_text(r.axis),
+				vec_text(r.up), r.objective_distance, r.objective_radius, r.candidates.size(), ms),
+				shared::common::LOG_TYPE::LOG_TYPE_STATUS);
+			log_candidates(r);
+			set_status(std::format("fit logged: {} confidence, {} axes ({})", level_text(r.level), r.candidates.size(),
+				r.why));
 		}
 
 		void save()
@@ -2823,6 +3439,7 @@ namespace comp::game::scopes
 		void reload()
 		{
 			data::reload();
+			g_fit_gen++;
 			g_ed_resync = true;
 		}
 

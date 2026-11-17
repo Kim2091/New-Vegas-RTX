@@ -11,21 +11,42 @@
 //
 // A lens weapon is a gun whose scope vanilla would show (flags1 0x04
 // HasScope with a scope model path, a projectile, and when flags2 0x2000
-// ScopeFromMod is set an installed weapon mod with effect 14) that has a lens
-// entry (scope_data.hpp) for its installed mods. Aiming one keeps the world
-// and the weapon on screen, raised in its ironsights pose, and the main
-// camera carries one remixapi_CameraInfoLensEXT: the entry's lens, carried
-// by the first-person weapon node (biped slot 5), sent in the render frame
-// of the first-person draws. Binoculars (a scope model, no projectile, no
-// ammo) need no entry: aiming them shows one camera-attached lens with the
-// binocular aperture (two overlapping circles), with the overlay, zoom and
-// crosshair hooks as for scopes and the
-// game's own cull and aim animation. Every other weapon keeps vanilla scopes.
+// ScopeFromMod is set an installed weapon mod with effect 14) whose verdict
+// for its installed mods is a lens. Aiming one keeps the world and the
+// weapon on screen, raised in its ironsights pose, and the main camera
+// carries one remixapi_CameraInfoLensEXT, carried by the first-person weapon
+// node (biped slot 5), sent in the render frame of the first-person draws.
+// Binoculars (a scope model, no projectile, no ammo) need no entry: aiming
+// them shows one camera-attached lens with the binocular aperture (two
+// overlapping circles), with the overlay, zoom and crosshair hooks as for
+// scopes and the game's own cull and aim animation. Every other weapon keeps
+// vanilla scopes.
+//
+// The verdict ([Scopes] FitLens, scope_fit.hpp, scope_mesh.hpp): at Present,
+// a new first-person weapon model, weapon or mod set reads the model's
+// triangles from the scene graph and fits the scope's eyepiece and objective
+// to them. The weapon's lens entry (scope_data.hpp; with none and [Scopes]
+// DefaultLens a default telescopic lens) gives the optics and look; its
+// geometry is used when the fit confirms it, the fitted geometry when the
+// fit is confident and the entry's is off or missing, the entry's when the
+// fit is not confident but the entry's passes a check against the mesh, and
+// otherwise the weapon keeps the game's scope. The entry's Fit key chooses
+// file geometry, mesh geometry or the game's scope instead. A mesh that
+// cannot be read falls back to the entry's Models path check. The fitted
+// values are in the frame of the eyepiece's nearest uniquely named
+// ancestor-or-self (its Node), so they ride an animated scope node. The
+// hooks see a latched verdict: it changes only while the player is not
+// aiming, or when the weapon or its mods change, and while the first-person
+// model is not loaded (third person) the session's last verdict for the
+// weapon stands in. Without FitLens the verdict is the entry and its Models
+// check alone.
 //
 // The hooks, each a pass-through for anything but a lens weapon while the
 // feature is active:
 //   * scope_model_attach: the scope model is not attached (the previous one
-//     is still removed);
+//     is still removed); with FitLens only for the held weapon whose
+//     verdict is a lens, so a weapon fitted later in its equip keeps its
+//     model attached but its scoped HUD state off;
 //   * scope_set_visible: the HUD does not enter its scoped state (no
 //     overlay, no scissor);
 //   * aim_cull_model_call: SetAiming's scope model test reads no model on
@@ -81,9 +102,11 @@ namespace comp::game::scopes
 	// goes out in: a scope's (aimed, or at the hip with [Scopes] LensAlways),
 	// or the binoculars' while aimed (camera-attached, the binocular
 	// aperture). False when there is none: the feature is inactive, the
-	// player is in third person, or the weapon is not a lens weapon. Also
+	// player is in third person, the weapon is not a lens weapon, or no
+	// light reaches the camera through the scope (at the hip or during the
+	// aim-in). `view` is the device view the camera goes out with. Also
 	// places the aim alignment point.
-	bool lens(remixapi_CameraInfoLensEXT& out);
+	bool lens(const D3DMATRIX& view, remixapi_CameraInfoLensEXT& out);
 
 	// The camera went out with `view` (the device view) and `lens`: with
 	// [Scopes] AimDebugLog, logs this frame's aim line, with the eye's offset
@@ -92,7 +115,8 @@ namespace comp::game::scopes
 
 	// Present: clears the aim alignment and shows the crosshair again when no
 	// lens went out this frame, reads the vision key, builds the next frame's
-	// actor tags and follows the equipped weapon for the editor.
+	// actor tags, fits the held weapon's scope to its mesh (FitLens) and
+	// follows the equipped weapon for the editor.
 	void on_frame_end();
 
 	// The instance tags (REMIXAPI_INSTANCE_CATEGORY_BIT_HEAT_SOURCE,
@@ -171,7 +195,9 @@ namespace comp::game::scopes
 		Fields& fields();
 
 		// A field changed in the menu: the weapon's entry takes the fields
-		// (in memory; the lens follows at once).
+		// (in memory; the lens follows at once). With FitLens, a geometry
+		// value that differs from the lens on screen sets the entry's Fit =
+		// file.
 		void changed();
 
 		// Writes the weapon's file.
@@ -179,6 +205,14 @@ namespace comp::game::scopes
 
 		// Reads every lens file again (unsaved edits are dropped).
 		void reload();
+
+		// Moves the geometry fields onto the lens fitted to the held weapon's
+		// mesh and sets the entry's Fit = auto (in memory, as changed()).
+		void use_fit();
+
+		// Reads and fits the held weapon's mesh again and logs every candidate
+		// axis, whatever the log's verbosity.
+		void log_fit();
 
 		// One line on what the editor edits, and a counter that moves when
 		// the line changes.

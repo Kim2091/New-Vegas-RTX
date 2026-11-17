@@ -253,6 +253,8 @@ namespace shared::common
 
 		// [Scopes]
 		scopes.path_traced = get_bool("Scopes", "PathTraced", true);
+		scopes.fit_lens = get_bool("Scopes", "FitLens", true);
+		scopes.default_lens = get_bool("Scopes", "DefaultLens", true);
 		scopes.align_aim = get_bool("Scopes", "AlignAim", true);
 		scopes.align_smoothing = std::clamp(get_float("Scopes", "AlignSmoothing", 0.45f), 0.0f, 2.0f);
 		scopes.align_strength = std::clamp(get_float("Scopes", "AlignStrength", 1.0f), 0.0f, 1.0f);
@@ -374,9 +376,10 @@ namespace shared::common
 		log("Config", std::format("Hair: Brightness={:.2f}", hair.brightness));
 		log("Config", std::format("VATS: Enabled={} SampleRadius={:.1f} SampleCount={}",
 			vats.enabled ? 1 : 0, vats.sample_radius, vats.sample_count));
-		log("Config", std::format("Scopes: PathTraced={} AlignAim={} AlignSmoothing={:.3f} AlignStrength={:.2f} "
-			"VisionKey={} VisionAllModes={} GamepadVisionButtons=0x{:04X} VariableZoomAll={} ForceFirstPerson={} "
-			"PeripheralBlur={:.2f} Sounds={}", scopes.path_traced ? 1 : 0, scopes.align_aim ? 1 : 0,
+		log("Config", std::format("Scopes: PathTraced={} FitLens={} DefaultLens={} AlignAim={} AlignSmoothing={:.3f} "
+			"AlignStrength={:.2f} VisionKey={} VisionAllModes={} GamepadVisionButtons=0x{:04X} VariableZoomAll={} "
+			"ForceFirstPerson={} PeripheralBlur={:.2f} Sounds={}", scopes.path_traced ? 1 : 0, scopes.fit_lens ? 1 : 0,
+			scopes.default_lens ? 1 : 0, scopes.align_aim ? 1 : 0,
 			scopes.align_smoothing, scopes.align_strength, scopes.vision_key, scopes.vision_all_modes ? 1 : 0,
 			scopes.gamepad_vision_buttons, scopes.variable_zoom_all ? 1 : 0, scopes.force_first_person ? 1 : 0,
 			scopes.peripheral_blur, scopes.sounds ? 1 : 0));

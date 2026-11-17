@@ -3,7 +3,10 @@
 // Per-weapon scope lens data (comp/game/scopes.hpp).
 //
 // One file per weapon, Data\Config\NewVegasRTX\Scopes\<EditorID>.ini, so a
-// mod adds or replaces a weapon's lens by shipping one file. Subfolders of
+// mod adds or replaces a weapon's lens by shipping one file. A weapon needs
+// no file for a lens: with [Scopes] FitLens its lens is placed from its mesh,
+// and the file chooses the optics and look and may give geometry the mesh
+// checks (Fit, scopes.hpp). Subfolders of
 // that folder (at any depth) are patches: a weapon's file is taken whole from
 // the subfolder that sorts last by its path (case-insensitive, so a "zz_"
 // prefix wins), else from the folder itself (docs/scope-presets-for-mod-
@@ -62,10 +65,17 @@
 //   DirtStrength      = 0..1         dirt on the glass ([Scopes] DirtStrength)
 //   Node              = name         the node of the first-person weapon's model the
 //                                    values are in (its root when not given or not found)
+//   Fit               = auto | file | mesh | off   where the geometry keys come from:
+//                                    auto, the file's when the weapon's loaded mesh confirms
+//                                    them, else the mesh's; file, the file's when they pass a
+//                                    check against the mesh; mesh, the mesh's only; off, no
+//                                    lens: the game's own scope (auto)
 //   Models            = path, ...    the first-person models (relative to meshes\) the
-//                                    values were measured on; when given and the weapon's
-//                                    model for its mods is none of them, the weapon keeps
-//                                    the game's own scope (none: no check)
+//                                    values were measured on; used only with [Scopes]
+//                                    FitLens=0, or when the weapon's mesh cannot be read:
+//                                    when given and the weapon's model for its mods is none
+//                                    of them, the weapon keeps the game's own scope (none:
+//                                    no check)
 //   VisionModes       = mode, ...    the modes the vision key cycles (none and VisionMode)
 //   Grain             = on | off     film grain on the lens (on)
 //
@@ -81,6 +91,13 @@ namespace comp::game::scopes::data
 	// Reticle shapes: none, crosshair, duplex, dot, circle-dot, mil-dot,
 	// german, drop, stadia, frame, grid, dial.
 	constexpr int kReticleCount = 12;
+
+	// Fit values: where an entry's geometry comes from.
+	constexpr int kFitAuto = 0;
+	constexpr int kFitFile = 1;
+	constexpr int kFitMesh = 2;
+	constexpr int kFitOff = 3;
+	constexpr int kFitCount = 4;
 
 	struct Lens
 	{
@@ -130,6 +147,8 @@ namespace comp::game::scopes::data
 		float dirt = -1.0f;                    // below 0: [Scopes] DirtStrength
 		bool grain = true;                     // Grain = off: the lens shows no film grain
 		char models[768] = {};                 // Models, normalized (normalize_model), comma-separated; empty: no check
+		int fit = kFitAuto;                    // kFitAuto, kFitFile, kFitMesh or kFitOff
+		bool geometry_given = false;           // the entry (or the [Lens] it inherits) gives EyepieceCenter
 	};
 
 	// A model path as Models compares it: lowercase, backslashes, relative to
@@ -151,6 +170,10 @@ namespace comp::game::scopes::data
 	// The weapon's EditorID, or null while it is unknown (the load order is
 	// not readable yet, or no loaded plugin names the form).
 	const std::string* editor_id(uint32_t form_id);
+
+	// The EditorID table is built (the load order was readable). Before that,
+	// editor_id is null for every weapon and no lens file can be found.
+	bool editor_ids_ready();
 
 	// The weapon's lens for this mod mask. False when its file has neither
 	// the combination's section nor [Lens]. `section` gets the most specific
@@ -175,6 +198,10 @@ namespace comp::game::scopes::data
 
 	// The folder the files live in, for the logs and the menu.
 	std::wstring folder();
+
+	// Whether the folder holds any lens file. Default lenses need the scope
+	// presets installed, so New Vegas RTX alone keeps the game's scopes.
+	bool any_files();
 
 	// "[Lens]" or "[Lens.23]".
 	std::string section_name(int section);

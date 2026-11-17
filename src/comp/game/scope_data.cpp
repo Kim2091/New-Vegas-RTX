@@ -361,6 +361,8 @@ namespace comp::game::scopes::data
 		constexpr const char* kApertures[] = { "circle", "rectangle", "binocular" };
 		constexpr const char* kVisionModes[] = { "none", "night", "thermal" };
 		constexpr const char* kReticlePlanes[] = { "second", "first" };
+		constexpr const char* kFits[] = { "auto", "file", "mesh", "off" };
+		static_assert(static_cast<int>(std::size(kFits)) == kFitCount);
 
 		// The index of `v` in `names`, or `fallback`.
 		template <size_t N>
@@ -374,7 +376,12 @@ namespace comp::game::scopes::data
 
 		void apply(const Keys& k, Lens& l)
 		{
-			read_floats(find(k, "EyepieceCenter"), l.eyepiece, 3);
+			if (const std::string* ec = find(k, "EyepieceCenter"))
+			{
+				l.geometry_given = true;
+				read_floats(ec, l.eyepiece, 3);
+			}
+			l.fit = pick(find(k, "Fit"), kFits, l.fit);
 			read_floats(find(k, "Axis"), l.axis, 3);
 			read_floats(find(k, "Up"), l.up, 3);
 			read_floats(find(k, "EyepieceRadius"), &l.eyepiece_radius, 1);
@@ -503,6 +510,7 @@ namespace comp::game::scopes::data
 				{ "NightGain", num(l.night_gain) },
 			};
 			if (l.node[0]) keys.emplace_back("Node", l.node);
+			if (l.fit != kFitAuto) keys.emplace_back("Fit", kFits[std::clamp(l.fit, 0, kFitCount - 1)]);
 			if (l.reticle_plane == 1) keys.emplace_back("ReticlePlane", kReticlePlanes[1]);
 			if (l.marking_color_set)
 			{
@@ -587,6 +595,12 @@ namespace comp::game::scopes::data
 		return it == g_ids.end() ? nullptr : &it->second;
 	}
 
+	bool editor_ids_ready()
+	{
+		if (!g_ids_built) g_ids_built = build_ids();
+		return g_ids_built;
+	}
+
 	bool resolve(uint32_t form_id, uint8_t mods, Lens& out, int* section)
 	{
 		const File& f = file(form_id);
@@ -669,6 +683,15 @@ namespace comp::game::scopes::data
 	std::wstring folder()
 	{
 		return session_files::game_dir() + L"Data\\Config\\NewVegasRTX\\Scopes\\";
+	}
+
+	bool any_files()
+	{
+		WIN32_FIND_DATAW fd{};
+		const HANDLE h = FindFirstFileW((folder() + L"*.ini").c_str(), &fd);
+		if (h == INVALID_HANDLE_VALUE) return false;
+		FindClose(h);
+		return true;
 	}
 
 	std::string section_name(int section)

@@ -543,13 +543,20 @@ namespace shared::common
 		// [Scopes]: weapon scopes drawn as a path-traced lens (game/scopes.*).
 		struct scopes_settings
 		{
-			// Aiming a scoped weapon that has a lens entry raises it in its
-			// ironsights pose and the runtime draws the lens in the scope,
-			// without the 2D overlay, the hidden weapon, the scissor or the
-			// zoom. Needs a runtime whose bridge forwards
-			// remixapi_CameraInfoLensEXT; with another runtime, or off, scopes
-			// are the game's own.
+			// Aiming a scoped weapon with a lens raises it in its ironsights
+			// pose and the runtime draws the lens in the scope, without the 2D
+			// overlay, the hidden weapon, the scissor or the zoom. Needs a
+			// runtime whose bridge forwards remixapi_CameraInfoLensEXT; with
+			// another runtime, or off, scopes are the game's own.
 			bool path_traced = true;
+			// FitLens: the lens is placed from the weapon's loaded mesh; a lens
+			// file's geometry is used when the mesh confirms it. Off: the lens
+			// file's geometry with its Models path check only.
+			bool fit_lens = true;
+			// DefaultLens: a scoped weapon without a lens file gets a default
+			// telescopic lens when its scope can be fitted with confidence.
+			// Off: it keeps the game's scope.
+			bool default_lens = true;
 			// While a lens weapon is aimed, the first-person camera sits at the
 			// entry's eye point, so the eye looks down the scope.
 			bool align_aim = true;

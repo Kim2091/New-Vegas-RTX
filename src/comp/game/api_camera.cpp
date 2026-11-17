@@ -187,7 +187,7 @@ namespace comp::game::api_camera
 
 			// The player's scope lens, in the same render frame (scopes.hpp).
 			remixapi_CameraInfoLensEXT lens = {};
-			if (scopes::lens(lens)) events.pNext = &lens;
+			if (scopes::lens(v, lens)) events.pNext = &lens;
 
 			remixapi_CameraInfo info = {};
 			info.sType = REMIXAPI_STRUCT_TYPE_CAMERA_INFO;
