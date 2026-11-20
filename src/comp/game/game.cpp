@@ -636,6 +636,9 @@ namespace comp::game
 
 		float light_range(const FnvRemixLight& l)
 		{
+			// No distance terms (JIP's lights carry (0, 0, 0)): the runtime takes such a light's brightness from
+			// its range alone, so it keeps its radius in every mode.
+			if (!(l.atten[1] > 0.0f) && !(l.atten[2] > 0.0f)) return l.radius;
 			switch (light_range_mode)
 			{
 			case kRangeRadius:      return l.radius;
@@ -644,11 +647,15 @@ namespace comp::game
 			}
 		}
 
-		// ConfigurePointLight (0x50C350) settings, cleaned up as 0x50E6C0 does. Defaults = the shipped INI.
+		// ConfigurePointLight (0x50C350) settings as it reads them: the INI's values, except the terms it adds.
+		// Those are a mask (0x11C8FA0) that 0x50E6C0 builds once from the compiled-in defaults, in the static
+		// initializer 0xF48900, before the INI is read: always 4 (quadratic only), whatever the INI's bUse* say.
+		// Defaults = the shipped INI.
 		struct AttenSettings
 		{
 			bool read = false, from_game = false;
-			uint8_t mask = 4;   // terms on: 1 constant, 2 linear, 4 quadratic
+			uint8_t mask = 4;       // terms on: 1 constant, 2 linear, 4 quadratic
+			uint8_t ini_use = 4;    // the INI's bUseConstant / bUseLinear / bUseQuadratic, the same bits (not used)
 			float constant = 0, lin_value = 3, lin_mult = 1, quad_value = 16, quad_mult = 1;
 			int32_t lin_method = 1, quad_method = 2;
 			bool out_quad_in_lin = false;
@@ -670,6 +677,8 @@ namespace comp::game
 			}
 			if ((s.mask & 4) || (!interior && s.out_quad_in_lin))
 			{
+				// Method 1 divides by the radius itself; fQuadraticRadiusMult only enters the m == 0 test
+				// (0x50C581-0x50C5D3).
 				const float m = static_cast<float>(static_cast<double>(count) * s.quad_mult);
 				a[2] = s.quad_method == 0 ? s.quad_value : m == 0.0f ? 0.01f
 					: s.quad_method == 1 ? static_cast<float>((1.0 / count) * s.quad_value) : s.quad_value / (m * m);
@@ -692,28 +701,31 @@ namespace comp::game
 				auto f = [](uint32_t r) { float x; std::memcpy(&x, &r, 4); return x; };
 				AttenSettings s;
 				s.read = s.from_game = true;
-				s.mask = static_cast<uint8_t>(((v[0] & 0xFF) ? 1 : 0) | ((v[1] & 0xFF) ? 2 : 0) | ((v[2] & 0xFF) ? 4 : 0));
-				if (!s.mask) s.mask = 4;
+				s.ini_use = static_cast<uint8_t>(((v[0] & 0xFF) == 1 ? 1 : 0) | ((v[1] & 0xFF) == 1 ? 2 : 0) |
+					((v[2] & 0xFF) == 1 ? 4 : 0));
 				s.constant = f(v[3]);
 				s.lin_value = f(v[4]); s.lin_mult = f(v[5]); s.lin_method = static_cast<int32_t>(v[6]);
 				s.quad_value = f(v[7]); s.quad_mult = f(v[8]); s.quad_method = static_cast<int32_t>(v[9]);
-				s.out_quad_in_lin = (v[10] & 0xFF) != 0;
+				s.out_quad_in_lin = (v[10] & 0xFF) == 1;   // a byte compared with 1 (0x50E640)
+				// As the method switches take an unknown method (linear: as 1, quadratic: as 2).
 				if (s.lin_method < 0 || s.lin_method > 2) s.lin_method = 1;
 				if (s.quad_method < 0 || s.quad_method > 2) s.quad_method = 2;
-				if (s.lin_mult == 0.0f) s.lin_mult = 1.0f;
-				if (s.quad_mult == 0.0f) s.quad_mult = 1.0f;
 				g_atten = s;
 			}
 			const auto& s = g_atten;
 			const auto e = engine_atten(512.0f, false);
+			// What 0x50E6C0 would make of the INI's bUse* (none set: quadratic only).
+			const uint8_t ini_terms = s.ini_use ? s.ini_use : static_cast<uint8_t>(4);
+			const bool ini_differs = s.from_game && ini_terms != s.mask;
 			shared::common::log_event("Lights", std::format("animated lights get the attenuation ConfigurePointLight "
 				"(0x50C350) gives their radius; [bLightAttenuation] {}: terms on {} | fConstantValue {:g} | fLinearValue {:g} "
 				"uLinearMethod {} fLinearRadiusMult {:g} | fQuadraticValue {:g} uQuadraticMethod {} "
-				"fQuadraticRadiusMult {:g} | bOutQuadInLin {} -> radius 512 outdoors ({:g}, {:g}, {:g})",
+				"fQuadraticRadiusMult {:g} | bOutQuadInLin {} -> radius 512 outdoors ({:g}, {:g}, {:g}){}",
 				s.from_game ? "as the game holds it" : "NOT READ, the shipped defaults", s.mask, s.constant,
 				s.lin_value, s.lin_method, s.lin_mult, s.quad_value, s.quad_method, s.quad_mult, s.out_quad_in_lin ? 1 : 0,
-				e[0], e[1], e[2]),
-				s.from_game ? shared::common::LOG_TYPE::LOG_TYPE_STATUS : shared::common::LOG_TYPE::LOG_TYPE_WARN);
+				e[0], e[1], e[2], ini_differs ? std::format(" | the INI's bUseConstant / bUseLinear / bUseQuadratic ask for "
+				"terms {}: the engine does not use them (it sets its terms before it reads the INI)", ini_terms) : std::string()),
+				s.from_game && !ini_differs ? shared::common::LOG_TYPE::LOG_TYPE_STATUS : shared::common::LOG_TYPE::LOG_TYPE_WARN);
 		}
 
 		bool finite_nonneg(float v) { return std::isfinite(v) && v >= 0.0f; }   // -0.0 passes

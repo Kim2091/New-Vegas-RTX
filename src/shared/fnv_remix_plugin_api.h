@@ -150,7 +150,8 @@ enum FnvRemixLightAnim : uint8_t
 	FNVR_LA_ATTEN   = 1u << 0,  // attenuation floats are animation state (LIGH 0x08, 0x40; JIP 0x800, 0x1000)
 	FNVR_LA_AMBIENT = 1u << 1,  // ambient floats may be (a LIGH flag JIP animates, 0x19C8)
 	FNVR_LA_JIP     = 1u << 2,  // a JIP light (its LIGH at +0xE8): JIP set its attenuation to (0, 0, 0)
-	FNVR_LA_GUESS   = 1u << 3,  // no LIGH known: ATTEN because the floats changed twice since the first copy
+	FNVR_LA_GUESS   = 1u << 3,  // no LIGH known: ATTEN because the floats changed twice, less than 5 s of game
+	                            // time apart; cleared with ATTEN and AMBIENT after 5 s of game time without a change
 };
 
 struct FnvRemixLight

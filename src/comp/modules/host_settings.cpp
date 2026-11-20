@@ -1056,8 +1056,8 @@ namespace comp::host_settings
 			add_int(Li, "Lights", "IntensityPercent", "Intensity %", L, &c.lights.intensity_percent, 100, 0, 10000, 1,
 				"Multiplier on the lights' diffuse colour.", hook_lights);
 			add_enum(Li, "Lights", "RangeMode", "Range", L, &c.lights.range_mode, 0, kLightRangeModes, 3,
-				"How far each light reaches: its radius, the distance at which its attenuation reaches 1/255, or no limit.",
-				hook_lights);
+				"How far each light reaches: its radius, the distance at which its attenuation reaches 1/255, or no limit. "
+				"A light with no distance falloff (JIP LN NVSE's own lights) keeps its radius.", hook_lights);
 			add_int(Li, "Lights", "EffectLightForward", "Pip-Boy light forward", L, &c.lights.effect_forward, 1, 0, 1000, 1,
 				"Units ahead of the eye the Pip-Boy light is placed in first person (0 = where the engine puts it).", hook_lights);
 			add_int(Li, "Lights", "EffectLightThirdPersonForward", "Pip-Boy light forward (3rd person)", L,

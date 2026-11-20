@@ -158,6 +158,8 @@ namespace fnv_exe
 		uintptr_t process_lists;       // ProcessLists: +0x08 the objects array, +0x14 / +0x24 begin / end indices per process level
 		uintptr_t input_globals;       // OSInputGlobals*
 		uintptr_t audio_manager;       // BSAudioManager* (its getter 0x453A70)
+		uintptr_t frame_seconds;       // float, the frame's game seconds (TimeGlobal +0xC): scaled by the time multiplier; the engine's light flicker (0x50DE60, through the getter 0x84D030) and JIP's light animations advance by it
+		uintptr_t os_globals;          // OSGlobals*; its byte +7 freezes the world (tfc 1, JIP FreezeTime: the main loop skips the world updates, 0x86E94F)
 
 		// ---- Vtables ----
 		uintptr_t vtbl_ppl_shade;            // BSShaderPPLightingProperty
@@ -253,6 +255,7 @@ namespace fnv_exe
 		0x011C7A59, 0x011C7A58, 0x011C7A5C, 0x01189624, 0x011C7ADC, 0x011F917C, 0x011D9770,
 		0x011F3330, 0x011C3F2C, 0x011DB150, 0x011F21CC, 0x0118947C, 0x01189480, 0x011AA2E8, 0x011CCA80,
 		0x0120315C, 0x011F2250, 0x011E07D0, 0x011D96C0, 0x011E0E80, 0x011F35CC, 0x011F6D98,
+		0x011F63A0, 0x011DEA0C,
 		// Vtables
 		0x010AE0D0, 0x010B9910, 0x010BCB60, 0x010AE670, 0x010BCC90, 0x010BCDC8,
 		0x0103168C, 0x010ED37C, 0x0108AA3C, 0x0107A2CC, 0x0109DD0C, 0x0109CB9C,

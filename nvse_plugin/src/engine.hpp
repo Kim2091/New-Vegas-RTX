@@ -53,6 +53,9 @@ namespace fnvr::engine
 	constexpr uint32_t IM_menuStackLen = 10;
 	constexpr uint32_t IM_pipBoyState = 0x4BC;             // u32, 0-5 state machine (0x70EE80)
 
+	// ---- OSGlobals ----
+	constexpr uint32_t OSG_freezeTime = 0x07;              // u8: the world does not update (main loop 0x86E94F)
+
 	// ---- TESObjectREFR ----
 	constexpr uint8_t kFormType_REFR = 0x3A;
 	constexpr uint8_t kFormType_ACHR = 0x3B;

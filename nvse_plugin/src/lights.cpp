@@ -1,5 +1,7 @@
 #include "common.hpp"
+#include "camera.hpp"
 #include "lights.hpp"
+#include "menu.hpp"
 #include "monitor.hpp"
 #include "owners.hpp"
 #include "pins.hpp"
@@ -10,6 +12,12 @@ namespace fnvr::lights
 	namespace
 	{
 		constexpr uint32_t kMaxListEntries = 4096;
+		// An effect light without a LIGH is taken as animated (FNVR_LA_GUESS) after two changes of its attenuation
+		// floats with no gap this long between them, in the seconds the animations advance by; the same gap clears
+		// the count and the guess. Animations write the floats every frame (the engine's flicker) or once a cycle
+		// (JIP's: 7.5 / 4.3 a second for Flicker / Flicker Slow, 4 / 2 for Color Shift / Color Shift Slow).
+		constexpr float kGuessQuietSeconds = 5.0f;
+		constexpr float kMaxStepSeconds = 0.25f;   // the most one frame adds (a hitch)
 
 		struct Light
 		{
@@ -19,10 +27,11 @@ namespace fnvr::lights
 			uint32_t listed_scan = 0;     // the scan that last found it in an engine list
 			uint64_t key = 0;             // FnvRemixLight::asset_key
 			uintptr_t ligh = 0;           // placed: the reference's base LIGH (its flags say whether it is animated)
-			uint8_t anim = 0;             // FnvRemixLightAnim seen so far: sticky, nothing gives the floats back
+			uint8_t anim = 0;             // FnvRemixLightAnim seen so far: sticky, except a guess (FNVR_LA_GUESS)
 			uint8_t atten_changes = 0;    // effect lights without a LIGH: changes of the attenuation floats
 			bool atten_seen = false;
 			float last_atten[3] = {};
+			float quiet = 0.0f;           // seconds of animation time since the floats last changed
 		};
 
 		std::unordered_map<uintptr_t, Light> g_lights;                      // NiLight -> entry
@@ -35,6 +44,26 @@ namespace fnvr::lights
 		uint32_t g_last_status = 0;
 		uint32_t g_fixups = 0, g_fixups_now = 0;
 		float g_fixup_max = 0.0f;
+		float g_step_seconds = 0.0f;   // this copy: animation_step()
+
+		// The seconds the light animations advanced this frame: the frame's game seconds (scaled by the time
+		// multiplier). 0 in a load or a menu (the state facts() reports as not in game, api.cpp) and while the
+		// world is frozen (tfc 1), when the engine keeps counting the frame time but updates no light.
+		float animation_step()
+		{
+			if (camera::loading() || !camera::in_world()) return 0.0f;
+			const menu::State m = menu::poll();
+			if (!m.ok || m.menu_mode) return 0.0f;
+			const auto& a = fnv_exe::addr();
+			uint32_t os = 0;
+			uint8_t frozen = 0;
+			if (!guard::get(a.os_globals, os) || !guard::plausible(os) || !guard::get(os + engine::OSG_freezeTime, frozen) ||
+				frozen)
+				return 0.0f;
+			float dt = 0.0f;
+			if (!guard::get(a.frame_seconds, dt) || !std::isfinite(dt) || !(dt > 0.0f)) return 0.0f;
+			return (std::min)(dt, kMaxStepSeconds);
+		}
 
 		// The light's world position from its parent's world transform and its
 		// own local one (Gamebryo: parent.t + parent.s * (parent.R * local.t)).
@@ -132,10 +161,27 @@ namespace fnvr::lights
 			{
 				// No LIGH to ask. After the engine makes a light only an animation writes these floats again: every
 				// frame (the engine's) or every cycle (JIP's). A light made again for another use changes them once.
-				if (l.atten_seen && std::memcmp(l.last_atten, atten, sizeof(atten)) != 0 && l.atten_changes < 255)
-					l.atten_changes++;
+				// Two changes without a kGuessQuietSeconds gap mark it; such a gap clears the count and the guess.
+				const bool changed = l.atten_seen && std::memcmp(l.last_atten, atten, sizeof(atten)) != 0;
 				l.atten_seen = true;
 				std::memcpy(l.last_atten, atten, sizeof(atten));
+				if (changed)
+				{
+					if (l.atten_changes < 255) l.atten_changes++;
+					l.quiet = 0.0f;
+				}
+				else if (l.atten_changes && (l.quiet += g_step_seconds) >= kGuessQuietSeconds)
+				{
+					if (l.anim & FNVR_LA_GUESS)
+					{
+						log::f("LightReg", "effect light 0x{:X}: its attenuation floats ({:g}, {:g}, {:g}) stayed unchanged "
+							"for {:.1f} s of game time: no longer taken as animated", l.light, atten[0], atten[1], atten[2],
+							l.quiet);
+						l.anim &= static_cast<uint8_t>(~(FNVR_LA_ATTEN | FNVR_LA_AMBIENT | FNVR_LA_GUESS));
+					}
+					l.atten_changes = 0;
+					l.quiet = 0.0f;
+				}
 				if (l.atten_changes >= 2) now |= FNVR_LA_ATTEN | FNVR_LA_AMBIENT | FNVR_LA_GUESS;
 			}
 			if ((now & FNVR_LA_ATTEN) && !(l.anim & FNVR_LA_ATTEN))
@@ -416,6 +462,7 @@ namespace fnvr::lights
 	{
 		scan();
 		update_player();
+		g_step_seconds = animation_step();
 		uint32_t n = 0;
 		auto put = [&](Light& l) {
 			// An effect light only the plugin's pin holds is one the engine let
