@@ -7,6 +7,7 @@
 #include "api_camera.hpp"
 #include "api_common.hpp"
 #include "scene_graph.hpp"
+#include "scopes.hpp"
 #include "stable_origin.hpp"
 
 #include "shared/common/ffp_state.hpp"
@@ -62,10 +63,10 @@ namespace comp::game::api_submit
 
 		enum class Reason : uint8_t
 		{
-			Off, Inactive, PipBoy, Blend, Texture, Layout, Geometry, World, Budget, Material, Build, Retry, Submit, Count
+			Inactive, PipBoy, Blend, Texture, Layout, Geometry, World, Budget, Material, Build, Retry, Submit, Count
 		};
 		constexpr const char* kReasonNames[] = {
-			"off", "inactive", "pipboy", "blend", "texture", "layout", "geometry", "world", "budget", "material", "build",
+			"inactive", "pipboy", "blend", "texture", "layout", "geometry", "world", "budget", "material", "build",
 			"retry", "submit",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
@@ -102,6 +103,10 @@ namespace comp::game::api_submit
 
 		std::unordered_set<uint64_t> g_logged;
 		uint32_t g_log_lines = 0;
+
+		// The draw being taken: its vertex window, and its vertices for the runtime (kept between draws).
+		Geometry g_geo;
+		std::vector<remixapi_HardcodedVertex> g_hv;
 
 		DWORD rs(IDirect3DDevice9* dev, D3DRENDERSTATETYPE s, DWORD fallback)
 		{
@@ -258,6 +263,8 @@ namespace comp::game::api_submit
 
 	bool gpu_particle_pass()
 	{
+		// Off: the draw keeps its old route, unclassified.
+		if (!shared::common::config::get().remix_api.effect_membranes) return false;
 		const auto& e = engine_class::current();
 		if (e.type == kPassParticle) return true;
 		// The engine named another pass: not one. Only a draw it gives no pass
@@ -270,8 +277,8 @@ namespace comp::game::api_submit
 	bool try_gpu_particles(IDirect3DDevice9* dev, const DrawDesc& d)
 	{
 		PROFILE_ZONE_N("api::try_gpu_particles");
+		if (!shared::common::config::get().remix_api.effect_membranes) return false;
 		g_c.draws++;
-		if (!shared::common::config::get().remix_api.effect_membranes) return refuse(Reason::Off);
 		auto* b = bridge();
 		if (!b) return refuse(Reason::Inactive);
 		if (api::pipboy_own_draw()) return refuse(Reason::PipBoy);
@@ -318,7 +325,7 @@ namespace comp::game::api_submit
 		const float* w = world_matrix();
 		if (!w) return refuse(Reason::World);
 
-		Geometry g;
+		Geometry& g = g_geo;
 		const char* reject = nullptr;
 		if (!read_geometry(dev, d, g, reject) || !g.count || g.tris.empty())
 		{
@@ -339,8 +346,9 @@ namespace comp::game::api_submit
 		if (fl > 1e-12f) { for (float& x : facing) x /= fl; }
 		else { facing[0] = 0.0f; facing[1] = 0.0f; facing[2] = 1.0f; }
 
-		// This frame's vertices.
-		std::vector<remixapi_HardcodedVertex> hv(g.count);
+		// This frame's vertices (every one is written below).
+		std::vector<remixapi_HardcodedVertex>& hv = g_hv;
+		hv.resize(g.count);
 		uint32_t live = 0;
 		VsOut first;
 		bool have_first = false;
@@ -484,6 +492,7 @@ namespace comp::game::api_submit
 			REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_OPACITY_MICROMAP | api_camera::view_model_categories(dev);
 		ii.mesh = sys.mesh;
 		ii.transform = frame_transform(w);
+		if (game::uses_viewmodel_projection()) scopes::motion_apply(ii.transform);   // as api_particles.cpp
 		ii.doubleSided = 1;   // camera-facing cards
 		if (b->DrawInstance(&ii) != REMIXAPI_ERROR_CODE_SUCCESS) return refuse(Reason::Submit);
 		g_c.sent++;
@@ -536,6 +545,8 @@ namespace comp::game::api_submit
 		g_mats.clear();
 		g_retry_at.clear();
 		g_ordinal.clear();
+		g_geo = {};
+		g_hv = {};
 	}
 
 	std::string gpu_particles_status()

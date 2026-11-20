@@ -7,6 +7,7 @@
 #include "api_camera.hpp"
 #include "api_common.hpp"
 #include "scene_graph.hpp"
+#include "scopes.hpp"
 #include "stable_origin.hpp"
 #include "stealth_field.hpp"
 
@@ -52,8 +53,13 @@
  * (colour x alpha x rtx.emissiveBlendOverrideEmissiveIntensity), which follows
  * the exposure like every other additive effect.
  * The colours change with the view and the fade, so the mesh is refreshed in
- * place every frame (MeshInfoRefreshGeometryEXT, same hash); it exists only
- * while the effect plays. One white 1 x 1 material serves every film.
+ * place (MeshInfoRefreshGeometryEXT, same hash) on a frame they changed. Colour
+ * refreshes share kRefreshVertsPerFrame vertices a frame: a film past that
+ * keeps its last colours (its bones still move it) until its turn, and the
+ * films held back longest have the next frames' vertices first. A new or
+ * re-read mesh and a first-person film take from the same vertices but are
+ * never held back. A film exists only while the effect plays. One white
+ * 1 x 1 material serves every film.
  *
  * Not reproduced
  * --------------
@@ -84,14 +90,21 @@ namespace comp::game::api_submit
 		constexpr UINT kForgetFrames = 120;
 		constexpr UINT kRetryFrames = 120;
 		constexpr uint32_t kMaxLogLines = 48;
+		// Vertices a frame that colour refreshes may take, about 100 bytes each through the bridge (36 of vertex,
+		// 32 of skinning, the indices). New or re-read meshes and first-person films take from the same count but
+		// are never held back. The first film to take from a frame's vertices (the oldest reservation, or the
+		// first send while none is taken) goes out whatever its size.
+		constexpr uint32_t kRefreshVertsPerFrame = 16384;
+		constexpr UINT kReserveFrames = 4;   // a held film drawn within this many frames keeps its turn
+		constexpr size_t kMaxSources = 256;   // SourceTexture answers kept
 
 		enum class Reason : uint8_t
 		{
-			Off, Inactive, PipBoy, Stealth, NoBones, Constants, Faded, Blend, Texture, Layout, Dynamic, Budget, Build,
+			Inactive, PipBoy, Stealth, NoBones, Constants, Faded, Blend, Texture, Layout, Dynamic, Budget, Build,
 			Retry, Palette, Bones, Submit, Count
 		};
 		constexpr const char* kReasonNames[] = {
-			"off", "inactive", "pipboy", "stealth", "nobones", "constants", "faded", "blend", "texture", "layout",
+			"inactive", "pipboy", "stealth", "nobones", "constants", "faded", "blend", "texture", "layout",
 			"dynamic", "budget", "build", "retry", "palette", "bones", "submit",
 		};
 		static_assert(std::size(kReasonNames) == static_cast<size_t>(Reason::Count));
@@ -99,11 +112,22 @@ namespace comp::game::api_submit
 		struct Counters
 		{
 			uint64_t passes = 0, drawn = 0, built = 0, refreshed = 0, evicted = 0;
-			uint64_t vertices = 0;   // vertices sent (builds and refreshes)
+			uint64_t unchanged = 0;   // refreshes not needed: the colours had not changed
+			uint64_t held = 0;        // refreshes held back: past the frame's refresh vertices
+			uint64_t vertices = 0;    // vertices sent (builds and refreshes)
+			uint32_t most_vertices = 0;   // the most sent in one frame
+			uint32_t most_refresh = 0;    // the most sent in one frame as colour refreshes that can be held back
 			uint64_t refused[static_cast<size_t>(Reason::Count)] = {};
 		};
 		Counters g_c;       // since the last status line
 		uint64_t g_total = 0;   // films drawn since start
+		// Vertices taken this frame: the reservations and every send not reserved (refreshes, builds, re-reads,
+		// first person).
+		uint32_t g_frame_vertices = 0;
+		uint32_t g_frame_sent = 0;       // vertices sent this frame
+		uint32_t g_frame_refresh = 0;    // of those, colour refreshes that can be held back
+		std::unordered_set<uint64_t> g_due;   // held films with this frame's refresh vertices reserved
+		std::vector<std::pair<UINT, uint64_t>> g_held_order;   // (held since, film), membrane_on_present
 
 		// One film: a partition of one actor under one effect.
 		struct Film
@@ -116,10 +140,13 @@ namespace comp::game::api_submit
 			std::vector<float> weights;                   // kBonesPerVertex per vertex
 			std::vector<uint32_t> slots;                  // kBonesPerVertex per vertex
 			std::vector<uint32_t> tris;
-			std::vector<remixapi_HardcodedVertex> verts;  // what the runtime holds; colours rewritten per frame
+			std::vector<remixapi_HardcodedVertex> verts;  // what the runtime gets; colours rewritten per frame
 			int max_slot = 0;
 			uint32_t vb_gen = 0, ib_gen = 0;
 			UINT last_frame = 0;
+			bool geometry_unsent = true;   // built or read again: sent on its next draw, whatever the budget
+			bool colours_unsent = false;   // verts' colours differ from what the runtime holds
+			UINT held_since = 0;           // frame its colours were first held back (0: not held)
 		};
 
 		std::unordered_map<uint64_t, Film> g_films;
@@ -131,6 +158,16 @@ namespace comp::game::api_submit
 		remixapi_MaterialHandle g_material = nullptr;
 		uint64_t g_white = 0;
 		UINT g_material_retry = 0;
+
+		// What source_constant found for a texture, while that texture lives (identity::texture_gen).
+		struct SourceSeen
+		{
+			uint32_t gen = 0;
+			bool constant = false;
+			float t[4] = {};
+			std::string what;
+		};
+		std::unordered_map<const void*, SourceSeen> g_sources;
 
 		std::unordered_set<uint64_t> g_logged;
 		uint32_t g_log_lines = 0;
@@ -192,14 +229,10 @@ namespace comp::game::api_submit
 			return true;
 		}
 
-		// SourceTexture as a constant: nothing bound reads (0, 0, 0, 1), a dummy
-		// of at most kDummyTexels its first texel. False for a real texture.
-		bool source_constant(float (&t)[4], std::string& what)
+		// A bound SourceTexture as a constant: a dummy of at most kDummyTexels
+		// its first texel. False for a real texture.
+		bool read_source(IDirect3DBaseTexture9* base, float (&t)[4], std::string& what)
 		{
-			t[0] = t[1] = t[2] = 0.0f;
-			t[3] = 1.0f;
-			IDirect3DBaseTexture9* base = shared::common::ffp_state::get().cur_texture(kSourceStage);
-			if (!base) { what = "none"; return true; }
 			if (base->GetType() != D3DRTYPE_TEXTURE) { what = std::format("type {}", static_cast<int>(base->GetType())); return false; }
 			D3DSURFACE_DESC sd = {};
 			if (FAILED(static_cast<IDirect3DTexture9*>(base)->GetLevelDesc(0, &sd))) { what = "unreadable description"; return false; }
@@ -218,6 +251,33 @@ namespace comp::game::api_submit
 			}
 			else what += std::format(" (not read: {}; taken as black, alpha 1)", reject ? reject : "?");
 			return true;
+		}
+
+		// SourceTexture as a constant: nothing bound reads (0, 0, 0, 1), a dummy
+		// of at most kDummyTexels its first texel. False for a real texture.
+		// Read once per texture; `what` describes it for the log.
+		bool source_constant(float (&t)[4], const std::string*& what)
+		{
+			static const std::string kNone = "none";
+			t[0] = t[1] = t[2] = 0.0f;
+			t[3] = 1.0f;
+			IDirect3DBaseTexture9* base = shared::common::ffp_state::get().cur_texture(kSourceStage);
+			if (!base) { what = &kNone; return true; }
+			const uint32_t gen = identity::texture_gen(base);
+			if (const auto it = g_sources.find(base); it != g_sources.end() && it->second.gen == gen)
+			{
+				std::copy(std::begin(it->second.t), std::end(it->second.t), t);
+				what = &it->second.what;
+				return it->second.constant;
+			}
+			if (g_sources.size() >= kMaxSources) g_sources.clear();
+			SourceSeen& s = g_sources[base];
+			s.gen = gen;
+			s.what.clear();
+			s.constant = read_source(base, t, s.what);
+			std::copy(std::begin(t), std::end(t), s.t);
+			what = &s.what;
+			return s.constant;
 		}
 
 		struct Layout
@@ -311,12 +371,15 @@ namespace comp::game::api_submit
 			if (max_slot >= MAX_FFP_BONES) { reject = "palette slot beyond the FFP bone limit"; return false; }
 			f.max_slot = max_slot;
 			f.tris = std::move(g.tris);
+			f.geometry_unsent = true;
 			return true;
 		}
 
 		// The pixel shader's output per vertex, with this pass's palette and eye.
-		void shade(Film& f, const float (&src)[4], const float* fill, const float* rim, float falloff, const float* eye)
+		// True when a vertex colour changed.
+		bool shade(Film& f, const float (&src)[4], const float* fill, const float* rim, float falloff, const float* eye)
 		{
+			bool changed = false;
 			const float fa = src[3] * fill[3];
 			const float base[3] = { (src[0] + fill[0]) * fa, (src[1] + fill[1]) * fa, (src[2] + fill[2]) * fa };
 			const size_t count = f.verts.size();
@@ -349,9 +412,12 @@ namespace comp::game::api_submit
 					const float e = std::clamp(1.0f - ndv, 0.0f, 1.0f);
 					edge = e > 0.0f ? std::pow(e, falloff) : 0.0f;
 				}
-				f.verts[i].color = D3DCOLOR_ARGB(unorm8(fa + edge * rim[3]), unorm8(base[0] + edge * rim[0]),
+				const uint32_t c = D3DCOLOR_ARGB(unorm8(fa + edge * rim[3]), unorm8(base[0] + edge * rim[0]),
 					unorm8(base[1] + edge * rim[1]), unorm8(base[2] + edge * rim[2]));
+				changed |= f.verts[i].color != c;
+				f.verts[i].color = c;
 			}
+			return changed;
 		}
 
 		bool send_mesh(Film& f, uint64_t key)
@@ -451,6 +517,9 @@ namespace comp::game::api_submit
 				ii.transform.matrix[r][r] = static_cast<float>(s);
 				ii.transform.matrix[r][3] = static_cast<float>(anchor[r] * s);
 			}
+			// In first person it moves with the weapon motion, as the arms under it do (api_skinned.cpp). A Pip-Boy
+			// draw never gets here (try_membrane refuses it).
+			if (game::uses_viewmodel_projection()) scopes::motion_apply(ii.transform);
 			ii.doubleSided = double_sided_for_cull(dev) ? 1 : 0;
 			if (b->DrawInstance(&ii) != REMIXAPI_ERROR_CODE_SUCCESS)
 			{
@@ -509,6 +578,8 @@ namespace comp::game::api_submit
 
 	bool membrane_pass()
 	{
+		// Off: the pass keeps the skinned route.
+		if (!shared::common::config::get().remix_api.effect_membranes) return false;
 		const uint16_t t = engine_class::current().type;
 		return (t >= kPassTexEffectFirst && t <= kPassTexEffectLast) || (t >= kPass3xTexEffectFirst && t <= kPass3xTexEffectLast);
 	}
@@ -516,8 +587,8 @@ namespace comp::game::api_submit
 	bool try_membrane(IDirect3DDevice9* dev, const DrawDesc& d)
 	{
 		PROFILE_ZONE_N("api::try_membrane");
+		if (!shared::common::config::get().remix_api.effect_membranes) return false;
 		g_c.passes++;
-		if (!shared::common::config::get().remix_api.effect_membranes) return refuse(Reason::Off);
 		if (!bridge() || !bridge_skins()) return refuse(Reason::Inactive);
 		if (api::pipboy_own_draw()) return refuse(Reason::PipBoy);
 
@@ -536,9 +607,9 @@ namespace comp::game::api_submit
 		const uintptr_t geo = engine_class::current().geometry ? engine_class::current().geometry
 			: scene_graph::current_geometry();
 		float src[4];
-		std::string source;
+		const std::string* source = nullptr;
 		const bool constant = source_constant(src, source);
-		const auto note = [&](const char* decision) { log_pass(dev, geo, fill, rim, falloff, source, d, nb, decision); };
+		const auto note = [&](const char* decision) { log_pass(dev, geo, fill, rim, falloff, *source, d, nb, decision); };
 
 		if (stealth_field::part(geo) != stealth_field::Part::None) return refuse(Reason::Stealth);
 		if (!material::draw_is_additive(dev) || !rs(dev, D3DRS_COLORWRITEENABLE, 0xF))
@@ -638,18 +709,46 @@ namespace comp::game::api_submit
 			f.vb_gen = vbi.gen;
 			f.ib_gen = ibi.gen;
 		}
-		if (f.max_slot >= nb) return refuse(Reason::Palette);
-
-		shade(f, src, fill, rim, falloff, eye);
-		if (!send_mesh(f, key))
+		if (f.max_slot >= nb)
 		{
-			destroy_film(f);
-			g_films.erase(it);
-			g_retry_at[key] = now + kRetryFrames;
-			shared::common::log("RemixApi", std::format("membrane: CreateMesh failed ({} verts) -- retried in {} frames",
-				d.num_vtx, kRetryFrames), shared::common::LOG_TYPE::LOG_TYPE_WARN, false);
-			return refuse(Reason::Build);
+			f.held_since = 0;   // not drawn: it takes no reservation
+			return refuse(Reason::Palette);
 		}
+
+		// The mesh goes out when it is new or read again, or when its colours changed. Colour refreshes share the
+		// frame's kRefreshVertsPerFrame: films held back have theirs reserved (membrane_on_present), the others go
+		// in draw order while the vertices last, and a first-person film always goes. A film not sent keeps the
+		// colours the runtime has.
+		if (shade(f, src, fill, rim, falloff, eye)) f.colours_unsent = true;
+		const uint32_t n = static_cast<uint32_t>(f.verts.size());
+		const bool vm = game::uses_viewmodel_projection();
+		const bool reserved = f.colours_unsent && g_due.erase(key) != 0;
+		const bool fits = g_frame_vertices == 0 || g_frame_vertices + n <= kRefreshVertsPerFrame;
+		const bool send = f.geometry_unsent || reserved || (f.colours_unsent && (fits || vm));
+		if (send)
+		{
+			const bool holdable = !f.geometry_unsent && !vm;
+			if (!send_mesh(f, key))
+			{
+				destroy_film(f);
+				g_films.erase(it);
+				g_retry_at[key] = now + kRetryFrames;
+				shared::common::log("RemixApi", std::format("membrane: CreateMesh failed ({} verts) -- retried in {} frames",
+					d.num_vtx, kRetryFrames), shared::common::LOG_TYPE::LOG_TYPE_WARN, false);
+				return refuse(Reason::Build);
+			}
+			if (!reserved) g_frame_vertices += n;
+			g_frame_sent += n;
+			if (holdable) g_frame_refresh += n;
+			f.geometry_unsent = f.colours_unsent = false;
+			f.held_since = 0;
+		}
+		else if (f.colours_unsent)
+		{
+			if (!f.held_since) f.held_since = (std::max)(now, 1u);
+			g_c.held++;
+		}
+		else g_c.unchanged++;
 
 		Reason why = Reason::Submit;
 		if (!submit(dev, f, blend, nb, why)) return refuse(why);
@@ -662,6 +761,9 @@ namespace comp::game::api_submit
 	void membrane_on_present()
 	{
 		g_seen.clear();
+		g_c.most_vertices = (std::max)(g_c.most_vertices, g_frame_sent);
+		g_c.most_refresh = (std::max)(g_c.most_refresh, g_frame_refresh);
+		g_frame_sent = g_frame_refresh = 0;
 		const UINT now = frame();
 		for (auto it = g_films.begin(); it != g_films.end();)
 		{
@@ -675,6 +777,22 @@ namespace comp::game::api_submit
 		}
 		if ((now & 63u) == 0)
 			std::erase_if(g_retry_at, [now](const auto& p) { return now >= p.second; });
+
+		// The next frame's refresh vertices go first to the films held back, longest first, that were drawn in the
+		// last kReserveFrames frames: in that order while they last (the first one whatever its size).
+		g_frame_vertices = 0;
+		g_due.clear();
+		g_held_order.clear();
+		for (const auto& [key, f] : g_films)
+			if (f.held_since && now - f.last_frame <= kReserveFrames) g_held_order.emplace_back(f.held_since, key);
+		std::sort(g_held_order.begin(), g_held_order.end());
+		for (const auto& h : g_held_order)
+		{
+			const uint32_t n = static_cast<uint32_t>(g_films.find(h.second)->second.verts.size());
+			if (g_frame_vertices && g_frame_vertices + n > kRefreshVertsPerFrame) break;
+			g_frame_vertices += n;
+			g_due.insert(h.second);
+		}
 	}
 
 	void membrane_on_reset()
@@ -682,6 +800,7 @@ namespace comp::game::api_submit
 		// API objects live in the runtime and survive a device reset.
 		g_seen.clear();
 		g_retry_at.clear();
+		g_sources.clear();
 	}
 
 	void membrane_drop_all()
@@ -690,6 +809,10 @@ namespace comp::game::api_submit
 		g_films.clear();
 		g_retry_at.clear();
 		g_seen.clear();
+		g_sources.clear();
+		g_due.clear();
+		g_held_order.clear();
+		g_frame_vertices = g_frame_sent = g_frame_refresh = 0;
 		if (g_material) { if (auto* b = bridge()) b->DestroyMaterial(g_material); g_material = nullptr; }
 		if (g_white) { textures::release(g_white); g_white = 0; }
 	}
@@ -701,9 +824,11 @@ namespace comp::game::api_submit
 		for (size_t i = 0; i < static_cast<size_t>(Reason::Count); i++)
 			if (g_c.refused[i]) reasons += std::format("{}{}={}", reasons.empty() ? "" : " ", kReasonNames[i], g_c.refused[i]);
 		const std::string s = std::format("membranes (effect-shader films, since the last line): passes={} drawn={} "
-			"built={} refreshed={} verticesSent={} live={} evicted={} notDrawn=({}) | films drawn since start {}",
-			g_c.passes, g_c.drawn, g_c.built, g_c.refreshed, g_c.vertices, g_films.size(), g_c.evicted,
-			reasons.empty() ? std::string("none") : reasons, g_total);
+			"built={} refreshed={} unchanged={} held={} verticesSent={} (most in a frame {}; colour refreshes at most {} "
+			"a frame, budget {}) live={} evicted={} notDrawn=({}) | films drawn since start {}",
+			g_c.passes, g_c.drawn, g_c.built, g_c.refreshed, g_c.unchanged, g_c.held, g_c.vertices, g_c.most_vertices,
+			g_c.most_refresh, kRefreshVertsPerFrame, g_films.size(), g_c.evicted, reasons.empty() ? std::string("none") : reasons,
+			g_total);
 		g_c = {};
 		return s;
 	}

@@ -323,7 +323,10 @@ namespace shared::common
 			// Effect-shader membranes on skinned actors (comp/game/api_membrane.cpp):
 			// the glowing film of a plasma kill's goo and of the laser / alien
 			// disintegration, sent as one more instance of the actor's geometry
-			// with the effect's colours per vertex. Off: the pass is not drawn.
+			// with the effect's colours per vertex; and the effect's additive GPU
+			// particles (comp/game/api_gpu_particles.cpp). Off: those draws keep
+			// the routes they had before (the film pass is not drawn, the
+			// particles are rasterised, untraced).
 			bool effect_membranes = true;
 
 			// First-person API draws (arms, weapon, unlit FX) carry the
