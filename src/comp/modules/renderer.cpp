@@ -902,6 +902,12 @@ namespace comp
 				hr, desc, true));
 			im->m_stats._drawcall_prim.track_single();
 		}
+		else if (game::api_submit::gpu_particle_pass() && game::api_submit::try_gpu_particles(dev, desc))
+		{
+			// An effect shader's particles, as on the indexed path.
+			game::frame_stats::note_route("DP_API_GPU_PARTICLES");
+			im->m_stats._drawcall_prim.track_single();
+		}
 		else if (!game::engine_class::carries_base(psmap) ||
 			(ffp.cur_decl_has_normal() && game::engine_class::land_lod(psmap, true)))
 		{
@@ -1077,6 +1083,15 @@ namespace comp
 			im->m_stats._drawcall_indexed_prim.track_single();
 			im->m_stats._drawcall_indexed_prim_using_vs.track_single();
 		}
+		else if (ffp.cur_decl_is_skinned() && game::api_submit::membrane_pass())
+		{
+			PROFILE_ZONE_N("route_SKINNED_MEMBRANE");
+			// An effect shader's film over the actor (a plasma kill's goo, the
+			// laser disintegration): its own API instance, or not drawn.
+			route_tag(diag, game::api_submit::try_membrane(dev, desc) ? "API_MEMBRANE" : "SKINNED_SKIP_MEMBRANE");
+			game::skinned_pass_done();
+			im->m_stats._drawcall_indexed_prim.track_single();
+		}
 		else if (ffp.cur_decl_is_skinned())
 		{
 			PROFILE_ZONE_N("route_SKINNED");
@@ -1148,6 +1163,14 @@ namespace comp
 						MinVertexIndex, NumVertices, startIndex, primCount);
 				},
 				hr, desc, false));
+			im->m_stats._drawcall_indexed_prim.track_single();
+		}
+		else if (game::api_submit::gpu_particle_pass() && game::api_submit::try_gpu_particles(dev, desc))
+		{
+			// An effect shader's particles (the sparks off a burning body): the
+			// GPU particle shader replayed on the CPU, through the API.
+			PROFILE_ZONE_N("route_API_GPU_PARTICLES");
+			route_tag(diag, "API_GPU_PARTICLES");
 			im->m_stats._drawcall_indexed_prim.track_single();
 		}
 		else if (!game::engine_class::carries_base(psmap))
