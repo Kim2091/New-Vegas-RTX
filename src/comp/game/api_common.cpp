@@ -265,6 +265,11 @@ namespace comp::game::api
 			// Draw capture (api_statics.cpp): its own line (reasons make it long).
 			shared::common::log("RemixApi", api_submit::statics_status(), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
 			shared::common::log("RemixApi", api_submit::skinned_status(), shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+			// Effect-shader films, once one was seen.
+			if (const std::string ms = api_submit::membrane_status(); !ms.empty())
+				shared::common::log("RemixApi", ms, shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
+			if (const std::string gs = api_submit::gpu_particles_status(); !gs.empty())
+				shared::common::log("RemixApi", gs, shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
 			// [RemixApi] ShaderBakeHair, once a hair draw asked for a bake.
 			if (const std::string hb = hair_bake::status(); !hb.empty())
 				shared::common::log("RemixApi", hb, shared::common::LOG_TYPE::LOG_TYPE_STATUS, false);
